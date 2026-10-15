@@ -3,8 +3,10 @@ package sim
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -452,6 +454,70 @@ func waitDone(t *testing.T, done chan error) error {
 	case <-time.After(2 * time.Second):
 		t.Fatal("超时：Session 未退出")
 		return nil
+	}
+}
+
+// sendJSON 持 writeMu 写 WS：对端升级后从不读时，写超时必须让发送以错误返回
+// 而非无限阻塞——否则 REPL 与 MCP 应答都会被一次卡死的写冻住。
+func TestSessionSendJSONWriteDeadlineUnblocksFrozenPeer(t *testing.T) {
+	old := writeTimeout
+	writeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { writeTimeout = old })
+
+	frozen := make(chan struct{})
+	t.Cleanup(func() { close(frozen) })
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		// 收紧接收缓冲后永不再读：对端的写在填满两侧内核缓冲后阻塞。
+		if tcp, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
+			_ = tcp.SetReadBuffer(1024)
+		}
+		<-frozen
+	}))
+	t.Cleanup(srv.Close)
+
+	dialer := websocket.Dialer{NetDial: func(network, addr string) (net.Conn, error) {
+		c, err := net.Dial(network, addr)
+		if tcp, ok := c.(*net.TCPConn); ok {
+			_ = tcp.SetWriteBuffer(1024)
+		}
+		return c, err
+	}}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("拨号失败: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	sess := NewSession(Config{URL: "ws://unused"}, strings.NewReader("exit\n"), &lockedBuffer{}, nil, &fakePlayer{})
+	sess.conn = conn // 直接注入连接：只钉 sendJSON 的写超时路径，不走握手/REPL
+
+	big := strings.Repeat("x", 64*1024)
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 200; i++ { // 双侧缓冲仅 ~2KB，必在中途写满阻塞
+			if err := sess.sendJSON(map[string]any{"type": "listen", "text": big}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("对端不读时 sendJSON 应以写超时失败，实际 200 次全部写成功")
+		}
+		var nerr net.Error
+		if !errors.As(err, &nerr) || !nerr.Timeout() {
+			t.Errorf("期望写超时错误（net timeout）, 实际: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sendJSON 被冻住：写超时未生效，writeMu 永不释放")
 	}
 }
 

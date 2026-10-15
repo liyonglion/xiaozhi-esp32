@@ -435,6 +435,11 @@ func (s *Session) sendDetect(text string) error {
 	})
 }
 
+// writeTimeout 单条 WS 写的超时。sendJSON 持 writeMu 写：对端停止读取时
+// WriteMessage 会无限阻塞，冻住 REPL 与 MCP 应答；超时走既有发送失败路径。
+// 变量而非常量：测试缩窗钉住超时行为。
+var writeTimeout = 10 * time.Second
+
 // sendJSON 序列化并写文本帧；握手后的所有消息回填 session_id。
 func (s *Session) sendJSON(msg map[string]any) error {
 	s.mu.Lock()
@@ -447,6 +452,7 @@ func (s *Session) sendJSON(msg map[string]any) error {
 		return fmt.Errorf("序列化 %v 消息失败: %w", msg["type"], err)
 	}
 	s.writeMu.Lock()
+	_ = s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	err = s.conn.WriteMessage(websocket.TextMessage, data)
 	s.writeMu.Unlock()
 	if err != nil {
