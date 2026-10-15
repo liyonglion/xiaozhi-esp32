@@ -156,6 +156,8 @@ func newOggPlayer(sink Player) *oggPlayer {
 
 // Play 封装一个裸 opus 包并转发给 sink。
 // 写 sink 在锁外：sink 阻塞（管道满）时 Stop 不被 Play 拖住。
+// ponytail: 打断与首轮写页存在毫秒级交错窗口（旧流尾页可能落入新进程），
+// #6 实测若出现跨流脏页再加代际计数。
 func (p *oggPlayer) Play(frame []byte) {
 	p.mu.Lock()
 	if p.enc == nil {
