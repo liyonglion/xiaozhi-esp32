@@ -265,12 +265,12 @@ func TestOggPlayerReissuesHeadersPerRound(t *testing.T) {
 	if len(pages) != 8 { // 轮 1：头 2 页+音频 2 页+EOS；轮 2：头 2 页+音频 1 页
 		t.Fatalf("两轮共应 8 页, 实际 %d", len(pages))
 	}
-	for i, p := range []int{0, 5} {
-		if !bytes.HasPrefix(pages[p].payload, []byte("OpusHead")) {
-			t.Errorf("第 %d 轮首个载荷应为 OpusHead, 实际 %q", i+1, pages[p].payload[:8])
+	for i, idx := range []int{0, 5} {
+		if !bytes.HasPrefix(pages[idx].payload, []byte("OpusHead")) {
+			t.Errorf("第 %d 轮首个载荷应为 OpusHead, 实际 %q", i+1, pages[idx].payload[:8])
 		}
-		if pages[p].seq != 0 {
-			t.Errorf("第 %d 轮头页 seq = %d, 期望从 0 重新计数", i+1, pages[p].seq)
+		if pages[idx].seq != 0 {
+			t.Errorf("第 %d 轮头页 seq = %d, 期望从 0 重新计数", i+1, pages[idx].seq)
 		}
 	}
 	// Finish 以空 EOS 页收尾该轮（RFC 3533 §6.2），granule 停在最后一个完成的包。

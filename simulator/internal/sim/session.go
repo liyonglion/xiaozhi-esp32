@@ -201,72 +201,85 @@ func (s *Session) handshake() error {
 	return nil
 }
 
+// maxInputBytes 单行输入的长度上限。超出给提示并拒发（选择拒发而非截断：
+// 截断后的半句话作为查询发给 server 更容易造成误解）。上限与旧
+// bufio.Scanner 的 64KiB 一致——区别是超限不再崩掉整个 REPL。
+const maxInputBytes = 64 << 10
+
 // repl 读取输入行直到 exit/quit 或 EOF。
+// 用 bufio.Reader 而非 Scanner：Scanner 的 64KiB 行长上限超限时直接报错
+// 退出，粘贴超长行会崩 REPL；Reader 无行长上限，超长行在应用层拒发。
 func (s *Session) repl() error {
-	scanner := bufio.NewScanner(s.in)
+	reader := bufio.NewReader(s.in)
 	s.showPrompt()
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			s.showPrompt()
-			continue
+	for {
+		raw, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("读取输入失败: %w", err)
 		}
-		if line == "exit" || line == "quit" {
-			return nil
+		if line := strings.TrimSpace(raw); line != "" {
+			switch {
+			case line == "exit" || line == "quit":
+				return nil
+			case len(line) > maxInputBytes:
+				s.printf("（提示）输入行超过 %d KiB 上限，已忽略——请拆分后再发\n", maxInputBytes>>10)
+			default:
+				s.handleInput(line)
+			}
 		}
-		s.handleInput(line)
+		if err == io.EOF {
+			return nil // EOF（Ctrl-D），无换行的末行已在上方处理
+		}
 		s.showPrompt()
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("读取输入失败: %w", err)
-	}
-	return nil // EOF（Ctrl-D）
 }
 
 // handleInput 按当前状态处理一行输入。
+// 播放态的任意输入行（无论是否带唤醒词）都走打断路径：旧 Ogg 流未停时，
+// 新旧两轮音频会挤进同一播放器。无唤醒词则只 abort + 查询，不发唤醒上报。
 func (s *Session) handleInput(line string) {
 	query, woke := ParseWake(line)
-	if woke {
-		if err := s.ensureConnected(); err != nil {
-			s.printf("重连失败: %v — 已回待唤醒态，下次唤醒将再试\n", err)
-			s.setState(StateIdle)
+	if !woke && s.currentState() != StateSpeaking {
+		if s.currentState() == StateIdle {
+			s.printf("（提示）未检测到唤醒词：请以「小智」或「你好小智」开头；输入 exit 退出\n")
 			return
 		}
-		was := s.currentState()
-		// 打断（barge-in）：播放态唤醒先立即停本地播放再发 abort，
-		// 随后照常按新唤醒处理（唤醒上报 + 可选查询）。
-		if was == StateSpeaking {
-			s.setAborting(true) // 先关门再停播：此后到达的在途旧轮音频直接丢弃
-			s.player.Stop()
-			if err := s.sendAbort(); err != nil {
-				s.reportSendError("打断（abort）", err)
-				return
-			}
+		if err := s.sendDetect(line); err != nil {
+			s.reportSendError("查询", err)
 		}
-		// 待输入态重复唤醒：只重置状态，不重复发唤醒上报、不发 abort；
-		// 同行携带的查询照常发送。
-		if was != StateListening {
-			if err := s.sendDetect(WakeReportText); err != nil {
-				s.reportSendError("唤醒上报", err)
-				return
-			}
-		}
-		if query != "" {
-			if err := s.sendDetect(query); err != nil {
-				s.reportSendError("查询", err)
-				return
-			}
-		}
-		s.setState(StateListening)
 		return
 	}
-	if s.currentState() == StateIdle {
-		s.printf("（提示）未检测到唤醒词：请以「小智」或「你好小智」开头；输入 exit 退出\n")
+	// 唤醒输入，或播放态的任意输入行：复用唤醒/打断路径。
+	if err := s.ensureConnected(); err != nil {
+		s.printf("重连失败: %v — 已回待唤醒态，下次唤醒将再试\n", err)
+		s.setState(StateIdle)
 		return
 	}
-	if err := s.sendDetect(line); err != nil {
-		s.reportSendError("查询", err)
+	was := s.currentState()
+	// 打断（barge-in）：先关门再停播（此后到达的在途旧轮音频直接丢弃），
+	// 再发 abort 让 server 结束本轮。
+	if was == StateSpeaking {
+		s.setAborting(true)
+		s.player.Stop()
+		if err := s.sendAbort(); err != nil {
+			s.reportSendError("打断（abort）", err)
+			return
+		}
 	}
+	// 唤醒上报仅在输入行带唤醒词时发送；待输入态重复唤醒只重置状态不重复上报。
+	if woke && was != StateListening {
+		if err := s.sendDetect(WakeReportText); err != nil {
+			s.reportSendError("唤醒上报", err)
+			return
+		}
+	}
+	if query != "" { // 无唤醒词时 query 即整行（播放态查询路径）
+		if err := s.sendDetect(query); err != nil {
+			s.reportSendError("查询", err)
+			return
+		}
+	}
+	s.setState(StateListening)
 }
 
 // sendAbort 发送打断消息；server 收到后回 tts stop 确认（见 handleTTS）。
@@ -328,6 +341,7 @@ func (s *Session) handleDisconnect(cause error) {
 	if !closing {
 		s.connDead = true
 		s.state = StateIdle
+		s.aborting = false // 该标记只对当前连接的在途旧轮音频有意义，不跨连接存活
 	}
 	s.mu.Unlock()
 	if closing {
@@ -356,9 +370,13 @@ func (s *Session) handleServerText(data []byte) {
 	case "tts":
 		s.handleTTS(msg)
 	case "mcp":
-		s.handleMCP(msg)
+		s.handleMCP(data) // 传原始字节：MCP id 需原样回传（见 mcp.go）
 	case "hello":
 		// 握手已在 Run 内处理，忽略重复 hello。
+	case "goodbye":
+		// WS 协议本无 goodbye（v0.x 旧 opcode 遗留）——防御性兜底：
+		// 一行本地化提示，不打原始 JSON，也不实现协议行为。
+		s.printf("会话已结束（goodbye）\n")
 	default:
 		s.printf("其他消息: %s\n", data)
 	}
@@ -435,6 +453,11 @@ func (s *Session) sendDetect(text string) error {
 	})
 }
 
+// writeTimeout 单条 WS 写的超时。sendJSON 持 writeMu 写：对端停止读取时
+// WriteMessage 会无限阻塞，冻住 REPL 与 MCP 应答；超时走既有发送失败路径。
+// 变量而非常量：测试缩窗钉住超时行为。
+var writeTimeout = 10 * time.Second
+
 // sendJSON 序列化并写文本帧；握手后的所有消息回填 session_id。
 func (s *Session) sendJSON(msg map[string]any) error {
 	s.mu.Lock()
@@ -447,6 +470,7 @@ func (s *Session) sendJSON(msg map[string]any) error {
 		return fmt.Errorf("序列化 %v 消息失败: %w", msg["type"], err)
 	}
 	s.writeMu.Lock()
+	_ = s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	err = s.conn.WriteMessage(websocket.TextMessage, data)
 	s.writeMu.Unlock()
 	if err != nil {

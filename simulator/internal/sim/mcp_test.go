@@ -262,6 +262,46 @@ func TestSessionMCPUnknownToolRepliesError(t *testing.T) {
 	}
 }
 
+// id 原样回传：JSON-RPC id 用 RawMessage 保留——大整数 id（>2^53）经 float64
+// 会丢精度（…993 变 …992），字符串 id 也不得被改写，否则 server 侧对不上号。
+func TestSessionMCPPreservesRequestIDVerbatim(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	verbose := &lockedBuffer{}
+	sess := newTestSession(t, fs, &lockedBuffer{}, verbose, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	fs.nextReceived(t) // hello
+	// 手工构造原始帧：map[string]any 装不下「会被 float64 丢精度的大整数 id」。
+	fs.sendRaw(t, `{"type":"mcp","payload":{"jsonrpc":"2.0","id":9007199254740993,"method":"tools/list"}}`)
+	fs.sendRaw(t, `{"type":"mcp","payload":{"jsonrpc":"2.0","id":"call-abc-123","method":"tools/list"}}`)
+
+	// 只认上行（→ ）帧里的 id：下行帧同样含请求 id，不能作为回显证据。
+	bigOK, strOK := false, false
+	eventually(t, func() bool {
+		for _, line := range strings.Split(verbose.String(), "\n") {
+			if !strings.HasPrefix(line, "→ ") {
+				continue
+			}
+			if strings.Contains(line, `"id":9007199254740993`) {
+				bigOK = true
+			}
+			if strings.Contains(line, `"id":"call-abc-123"`) {
+				strOK = true
+			}
+		}
+		return bigOK && strOK
+	})
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
+	}
+}
+
 // MCP 期间对话不串线：REPL 在发唤醒+查询的同时，server 交替下发 MCP 请求与
 // 对话/音频帧——上行消息互不丢失（顺序跨 goroutine 不定，按集合断言），
 // 对话帧照常打印、opus 照常到达播放器（-race 下验证并发 WS 写安全）。

@@ -3,8 +3,10 @@ package sim
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -206,6 +208,21 @@ func (fs *fakeServer) send(t *testing.T, msg map[string]any) {
 		t.Fatal("假 server 尚未完成 WebSocket 升级")
 	}
 	writeJSON(t, conn, msg)
+}
+
+// sendRaw 从 server 侧下发一条手工构造的原始文本帧，保留 JSON 原貌
+// （如会被 map[string]any 丢精度的大整数 id）。
+func (fs *fakeServer) sendRaw(t *testing.T, data string) {
+	t.Helper()
+	fs.mu.Lock()
+	conn := fs.conn
+	fs.mu.Unlock()
+	if conn == nil {
+		t.Fatal("假 server 尚未完成 WebSocket 升级")
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(data)); err != nil {
+		t.Fatalf("假 server 下发原始帧失败: %v", err)
+	}
 }
 
 // sendBinary 从 server 侧下发一条二进制帧（模拟 opus 包）。
@@ -452,6 +469,132 @@ func waitDone(t *testing.T, done chan error) error {
 	case <-time.After(2 * time.Second):
 		t.Fatal("超时：Session 未退出")
 		return nil
+	}
+}
+
+// 粘贴超长行（旧 bufio.Scanner 的 64KiB 上限会崩整个 REPL）：
+// 友好提示 + 拒发，REPL 不退出，后续输入照常处理。
+func TestSessionOverlongLineRejectedAndREPLSurvives(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	// 40K 个汉字 ≈ 120KiB UTF-8，远超 64KiB 上限。
+	if _, err := io.WriteString(stdin, strings.Repeat("超", 40*1024)+"\n"); err != nil {
+		t.Fatalf("写入超长行失败: %v", err)
+	}
+	eventually(t, func() bool { return strings.Contains(out.String(), "已忽略") })
+
+	if _, err := io.WriteString(stdin, "小智，你好\nexit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                      // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 超长行之后的唤醒照常
+	wantDetect(t, fs.nextReceived(t), "你好", fs.sessionID)
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("超长行不应崩 REPL, 实际: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "64 KiB") {
+		t.Errorf("提示应说明长度上限, 实际输出:\n%s", got)
+	}
+	// 超长行本身未发给 server。
+	select {
+	case msg := <-fs.received:
+		t.Errorf("超长行不应作为消息发送, 却收到: %v", msg)
+	default:
+	}
+}
+
+// goodbye 帧（WS 协议本无，v0.x 旧 opcode 遗留）的防御性兜底：
+// 一行本地化提示，不打原始 JSON，REPL 不受影响。
+func TestSessionGoodbyeFramePrintsFriendlyLine(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	fs.nextReceived(t) // hello
+	fs.send(t, map[string]any{"type": "goodbye", "session_id": fs.sessionID})
+	eventually(t, func() bool { return strings.Contains(out.String(), "会话已结束") })
+	if got := out.String(); strings.Contains(got, "其他消息") {
+		t.Errorf("goodbye 不应落入默认分支打原始 JSON, 实际输出:\n%s", got)
+	}
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("goodbye 后 exit 应干净退出, 实际: %v", err)
+	}
+}
+
+// sendJSON 持 writeMu 写 WS：对端升级后从不读时，写超时必须让发送以错误返回
+// 而非无限阻塞——否则 REPL 与 MCP 应答都会被一次卡死的写冻住。
+func TestSessionSendJSONWriteDeadlineUnblocksFrozenPeer(t *testing.T) {
+	old := writeTimeout
+	writeTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { writeTimeout = old })
+
+	frozen := make(chan struct{})
+	t.Cleanup(func() { close(frozen) })
+	upgrader := websocket.Upgrader{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		// 收紧接收缓冲后永不再读：对端的写在填满两侧内核缓冲后阻塞。
+		if tcp, ok := conn.UnderlyingConn().(*net.TCPConn); ok {
+			_ = tcp.SetReadBuffer(1024)
+		}
+		<-frozen
+	}))
+	t.Cleanup(srv.Close)
+
+	dialer := websocket.Dialer{NetDial: func(network, addr string) (net.Conn, error) {
+		c, err := net.Dial(network, addr)
+		if tcp, ok := c.(*net.TCPConn); ok {
+			_ = tcp.SetWriteBuffer(1024)
+		}
+		return c, err
+	}}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("拨号失败: %v", err)
+	}
+	t.Cleanup(func() { conn.Close() })
+
+	sess := NewSession(Config{URL: "ws://unused"}, strings.NewReader("exit\n"), &lockedBuffer{}, nil, &fakePlayer{})
+	sess.conn = conn // 直接注入连接：只钉 sendJSON 的写超时路径，不走握手/REPL
+
+	big := strings.Repeat("x", 64*1024)
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 200; i++ { // 双侧缓冲仅 ~2KB，必在中途写满阻塞
+			if err := sess.sendJSON(map[string]any{"type": "listen", "text": big}); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("对端不读时 sendJSON 应以写超时失败，实际 200 次全部写成功")
+		}
+		var nerr net.Error
+		if !errors.As(err, &nerr) || !nerr.Timeout() {
+			t.Errorf("期望写超时错误（net timeout）, 实际: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("sendJSON 被冻住：写超时未生效，writeMu 永不释放")
 	}
 }
 

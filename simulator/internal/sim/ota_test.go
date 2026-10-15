@@ -267,6 +267,69 @@ func TestBootOTARejectsMQTTMode(t *testing.T) {
 	}
 }
 
+// 确定性 4xx（404 地址错、401 认证错等）：立即失败并给明确信息，
+// 不做退避重试（重试只会白等 ~3.5s）。
+func TestBootOTA4xxFailsFastWithoutRetry(t *testing.T) {
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		return http.StatusNotFound, `{"error":"not found"}`
+	})
+	stdinR, _ := scriptStdin(t)
+	out := &lockedBuffer{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{DeviceID: "de:ad:be:ef:ca:fe", ClientID: "0f3a7c2e-9b41-4d8a-a6d5-3e1f2b4c5d6e"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, out, nil, nil)
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("超时：确定性 4xx 未立即失败")
+	}
+	if err == nil {
+		t.Fatal("4xx 应使 Boot 返回错误")
+	}
+	if got := ota.count(); got != 1 {
+		t.Errorf("确定性 4xx 不应重试（期望 1 个请求）, 实收 %d 个", got)
+	}
+	for _, want := range []string{"404", "--ota-url"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("退出错误应含 %q（指向排查方向）, 实际: %v", want, err)
+		}
+	}
+	if got := out.String(); strings.Contains(got, "重试") {
+		t.Errorf("4xx 不应打印重试进度, 实际输出:\n%s", got)
+	}
+}
+
+// 429 是 4xx 中的例外：限流是暂时性失败，退避重试后应成功。
+func TestBootOTA429RetriesThenSucceeds(t *testing.T) {
+	fs := newFakeServer(t)
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		if count == 1 {
+			return http.StatusTooManyRequests, `{"error":"slow down"}`
+		}
+		return http.StatusOK, otaResponseBody(fs.wsURL, "", false)
+	})
+	stdinR, stdin := scriptStdin(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{DeviceID: "de:ad:be:ef:ca:fe", ClientID: "0f3a7c2e-9b41-4d8a-a6d5-3e1f2b4c5d6e"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, &lockedBuffer{}, nil, nil)
+	}()
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("429 后重试应成功, 实际: %v", err)
+	}
+	if got := ota.count(); got != 2 {
+		t.Errorf("429 应重试一次后成功（期望 2 个请求）, 实收 %d 个", got)
+	}
+}
+
 // auth 关闭的部署 token 为空串：连接应省略 Authorization 头。
 func TestBootOTAEmptyTokenOmitsAuthorization(t *testing.T) {
 	fs := newFakeServer(t)

@@ -46,8 +46,16 @@ func Boot(cfg Config, ota OTAConfig, in io.Reader, out io.Writer, verbose io.Wri
 // otaRetries 初次失败后的重试次数（指数退避：Backoff×1、×2、×4）。
 const otaRetries = 3
 
+// permanentError 确定性失败：重试不会好转（非 5xx/429 的 HTTP 状态、mqtt 节、
+// 响应形态错误等）。checkOTA 据此跳过退避重试，立即带明确信息退出。
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }
+
 // checkOTA POST system-info 形态 body 到 OTA 端点，解析 websocket{url,token}。
-// 传输层/HTTP 层失败按指数退避重试 otaRetries 次；server 明确答复的不一致（如 mqtt 节）不重试。
+// 仅网络错误与 5xx/429（暂时性失败）按指数退避重试 otaRetries 次；
+// 确定性失败（其余 4xx、mqtt 节等）重试只是浪费退避时间，立即退出。
 func checkOTA(cfg Config, ota OTAConfig, log io.Writer) (*wsEndpoint, error) {
 	backoff := ota.Backoff
 	if backoff <= 0 {
@@ -64,23 +72,24 @@ func checkOTA(cfg Config, ota OTAConfig, log io.Writer) (*wsEndpoint, error) {
 		if err == nil {
 			return ep, nil
 		}
-		if errors.Is(err, errMQTTMode) {
-			return nil, fmt.Errorf("服务器下发了 MQTT 接入配置，模拟器不支持 MQTT 模式（仅支持 WebSocket）: %w", err)
+		var perm permanentError
+		if errors.As(err, &perm) {
+			return nil, perm.err
 		}
 		lastErr = err
 	}
 	return nil, fmt.Errorf("OTA 检查失败，已重试 %d 次: %w — 确认 --ota-url 地址正确且 server 已启动", otaRetries, lastErr)
 }
 
-// otaAttempt 单次 OTA 请求。
+// otaAttempt 单次 OTA 请求。确定性失败包成 permanentError（见 checkOTA 的重试策略）。
 func otaAttempt(cfg Config, otaURL string) (*wsEndpoint, error) {
 	data, err := json.Marshal(systemInfo(cfg))
 	if err != nil {
-		return nil, fmt.Errorf("构造 OTA 请求体失败: %w", err)
+		return nil, permanentError{fmt.Errorf("构造 OTA 请求体失败: %w", err)}
 	}
 	req, err := http.NewRequest(http.MethodPost, otaURL, bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("无效的 OTA 地址 %q: %w", otaURL, err)
+		return nil, permanentError{fmt.Errorf("无效的 OTA 地址 %q: %w", otaURL, err)}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Device-Id", cfg.DeviceID)
@@ -90,11 +99,17 @@ func otaAttempt(cfg Config, otaURL string) (*wsEndpoint, error) {
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("OTA 请求失败（%s）: %w", otaURL, err)
+		return nil, fmt.Errorf("OTA 请求失败（%s）: %w", otaURL, err) // 网络错误：可重试
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OTA 端点返回 HTTP %d（%s）", resp.StatusCode, otaURL)
+		if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
+			// 暂时性失败（服务端故障/限流）：可重试。
+			return nil, fmt.Errorf("OTA 端点返回 HTTP %d（%s）", resp.StatusCode, otaURL)
+		}
+		// 确定性 4xx（404 地址错、401 认证配置错、400 请求形态错……）：重试无益。
+		return nil, permanentError{fmt.Errorf(
+			"OTA 端点返回 HTTP %d（%s）— 请检查 --ota-url 地址与 server 配置", resp.StatusCode, otaURL)}
 	}
 
 	var parsed struct {
@@ -105,13 +120,13 @@ func otaAttempt(cfg Config, otaURL string) (*wsEndpoint, error) {
 		MQTT json.RawMessage `json:"mqtt"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("解析 OTA 响应失败: %w", err)
+		return nil, permanentError{fmt.Errorf("解析 OTA 响应失败: %w", err)}
 	}
 	if len(parsed.MQTT) > 0 && string(parsed.MQTT) != "null" {
-		return nil, fmt.Errorf("OTA 响应含 mqtt 节: %w", errMQTTMode)
+		return nil, permanentError{fmt.Errorf("OTA 响应含 mqtt 节（server 配置了 mqtt_gateway）: %w", errMQTTMode)}
 	}
 	if parsed.Websocket.URL == "" {
-		return nil, fmt.Errorf("OTA 响应缺少 websocket.url（%s）", otaURL)
+		return nil, permanentError{fmt.Errorf("OTA 响应缺少 websocket.url（%s）", otaURL)}
 	}
 	return &wsEndpoint{URL: parsed.Websocket.URL, Token: parsed.Websocket.Token}, nil
 }

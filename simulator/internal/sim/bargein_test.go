@@ -24,8 +24,8 @@ func TestSessionBargeInStopsPlayerAndSendsAbortThenNewWake(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智，讲个长故事\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t)                                      // hello
-	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	fs.nextReceived(t)                                       // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)  // 唤醒上报
 	wantDetect(t, fs.nextReceived(t), "讲个长故事", fs.sessionID) // 查询
 
 	// server 开始长 TTS：起播 + 下发若干 opus 包（同步到确已进入播放态）。
@@ -145,10 +145,10 @@ func TestSessionRepeatWakeWhileListeningOnlyResets(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智\n再讲一个故事\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t)                                      // hello
-	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	fs.nextReceived(t)                                        // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)   // 唤醒上报
 	wantDetect(t, fs.nextReceived(t), "再讲一个故事", fs.sessionID) // 查询
-	eventually(t, func() bool { // 已进入待输入态
+	eventually(t, func() bool {                               // 已进入待输入态
 		return strings.Count(out.String(), "待输入> ") >= 2
 	})
 
@@ -218,9 +218,9 @@ func TestSessionPlaybackAfterBargeInRestartsCleanStream(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智，再讲一个\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t) // abort
-	fs.nextReceived(t) // 新唤醒上报
-	fs.nextReceived(t) // 新查询
+	fs.nextReceived(t)                                         // abort
+	fs.nextReceived(t)                                         // 新唤醒上报
+	fs.nextReceived(t)                                         // 新查询
 	fs.send(t, map[string]any{"type": "tts", "state": "stop"}) // 打断确认
 
 	// 新一轮 TTS（新唤醒的应答）：起播 + 音频 + 正常收尾。
@@ -263,6 +263,71 @@ func TestSessionPlaybackAfterBargeInRestartsCleanStream(t *testing.T) {
 	// 状态回正：新轮 stop 后回待唤醒。
 	if n := strings.Count(got, "待唤醒> \n"); n < 2 {
 		t.Errorf("新轮收尾后应回待唤醒态（至少 2 次）, 实际 %d 次:\n%s", n, got)
+	}
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
+	}
+}
+
+// 播放态无唤醒词的输入行同样走打断路径：Stop + abort + 该行整行作为查询，
+// 不发唤醒上报——否则旧 Ogg 流未停，新旧两轮音频会挤进同一播放器。
+func TestSessionSpeakingQueryWithoutWakeWordInterrupts(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	player := &fakePlayer{}
+	sess := newTestSession(t, fs, out, nil, player, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	if _, err := io.WriteString(stdin, "小智，讲个长故事\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                       // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)  // 唤醒上报
+	wantDetect(t, fs.nextReceived(t), "讲个长故事", fs.sessionID) // 查询
+
+	fs.send(t, map[string]any{"type": "tts", "state": "start"})
+	fs.sendBinary(t, []byte{0x01})
+	eventually(t, func() bool {
+		frames, _, _ := player.snapshot()
+		return len(frames) >= 3
+	})
+	before, _, _ := player.snapshot()
+
+	// 播放态直接打查询（无唤醒词前缀）。
+	if _, err := io.WriteString(stdin, "换成讲个笑话\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+
+	// 上行顺序：abort → 整行作为查询，中间无唤醒上报。
+	abort := fs.nextReceived(t)
+	wantString(t, abort, "type", "abort")
+	wantString(t, abort, "session_id", fs.sessionID)
+	wantDetect(t, fs.nextReceived(t), "换成讲个笑话", fs.sessionID)
+	time.Sleep(100 * time.Millisecond)
+	select {
+	case msg := <-fs.received:
+		t.Errorf("不应发送唤醒上报或多余消息, 却收到: %v", msg)
+	default:
+	}
+
+	// 本地播放立即停（Stop 而非 Finish），已打断旧轮的在途尾包被丢弃。
+	fs.sendBinary(t, []byte{0x09})
+	time.Sleep(100 * time.Millisecond)
+	frames, finishes, stops := player.snapshot()
+	if len(frames) != len(before) {
+		t.Errorf("已打断旧轮的在途尾包应被丢弃：页数 %d → %d", len(before), len(frames))
+	}
+	if finishes != 0 {
+		t.Errorf("打断不应触发 Finish, 实际 %d 次", finishes)
+	}
+	if stops != 1 {
+		t.Errorf("打断应立即 Stop 播放, 实际 %d 次", stops)
 	}
 
 	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
