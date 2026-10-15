@@ -264,3 +264,85 @@ func TestSessionHelloHandshakeAndWakeFlow(t *testing.T) {
 		t.Fatal("超时：exit 后 Session 未退出")
 	}
 }
+
+// 两段式输入：先「小智」唤醒进入待输入态，下一行整行作为查询发送。
+func TestSessionTwoStageInput(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	for _, line := range []string{"小智\n", "我想听故事\n", "exit\n"} {
+		if _, err := io.WriteString(stdin, line); err != nil {
+			t.Fatalf("写入脚本输入失败: %v", err)
+		}
+	}
+
+	// hello 之后的设备消息：唤醒上报 + 两段式的查询。
+	fs.nextReceived(t) // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)
+	wantDetect(t, fs.nextReceived(t), "我想听故事", fs.sessionID)
+
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
+	}
+}
+
+// 待唤醒态收到无唤醒词前缀的行：给提示而非静默，也不向 server 发任何 listen 消息。
+func TestSessionIdleLineWithoutWakeWordGetsHint(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	if _, err := io.WriteString(stdin, "今天天气怎么样\nexit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+
+	fs.nextReceived(t) // hello
+
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
+	}
+	// Run 已返回，所有输入处理完毕：不应再收到任何 listen 消息。
+	select {
+	case msg := <-fs.received:
+		t.Errorf("待唤醒态不应发送消息, 却收到: %v", msg)
+	default:
+	}
+	if got := out.String(); !strings.Contains(got, "未检测到唤醒词") {
+		t.Errorf("终端输出应包含无唤醒词提示, 实际输出:\n%s", got)
+	}
+}
+
+// stdin EOF（Ctrl-D）干净退出。
+func TestSessionEOFExitsCleanly(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	sess := newTestSession(t, fs, &lockedBuffer{}, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	if err := stdin.Close(); err != nil {
+		t.Fatalf("关闭脚本 stdin 失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("EOF 后 Session.Run 应返回 nil, 实际: %v", err)
+	}
+}
+
+// waitDone 等待 Session.Run 结束，超时失败。
+func waitDone(t *testing.T, done chan error) error {
+	t.Helper()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(2 * time.Second):
+		t.Fatal("超时：Session 未退出")
+		return nil
+	}
+}
