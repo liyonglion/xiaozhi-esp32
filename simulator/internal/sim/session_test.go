@@ -210,6 +210,21 @@ func (fs *fakeServer) send(t *testing.T, msg map[string]any) {
 	writeJSON(t, conn, msg)
 }
 
+// sendRaw 从 server 侧下发一条手工构造的原始文本帧，保留 JSON 原貌
+// （如会被 map[string]any 丢精度的大整数 id）。
+func (fs *fakeServer) sendRaw(t *testing.T, data string) {
+	t.Helper()
+	fs.mu.Lock()
+	conn := fs.conn
+	fs.mu.Unlock()
+	if conn == nil {
+		t.Fatal("假 server 尚未完成 WebSocket 升级")
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(data)); err != nil {
+		t.Fatalf("假 server 下发原始帧失败: %v", err)
+	}
+}
+
 // sendBinary 从 server 侧下发一条二进制帧（模拟 opus 包）。
 func (fs *fakeServer) sendBinary(t *testing.T, data []byte) {
 	t.Helper()

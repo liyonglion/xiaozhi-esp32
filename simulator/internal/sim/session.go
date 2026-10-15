@@ -370,7 +370,7 @@ func (s *Session) handleServerText(data []byte) {
 	case "tts":
 		s.handleTTS(msg)
 	case "mcp":
-		s.handleMCP(msg)
+		s.handleMCP(data) // 传原始字节：MCP id 需原样回传（见 mcp.go）
 	case "hello":
 		// 握手已在 Run 内处理，忽略重复 hello。
 	case "goodbye":
