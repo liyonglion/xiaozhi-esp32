@@ -24,8 +24,8 @@ func TestSessionBargeInStopsPlayerAndSendsAbortThenNewWake(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智，讲个长故事\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t)                                      // hello
-	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	fs.nextReceived(t)                                       // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)  // 唤醒上报
 	wantDetect(t, fs.nextReceived(t), "讲个长故事", fs.sessionID) // 查询
 
 	// server 开始长 TTS：起播 + 下发若干 opus 包（同步到确已进入播放态）。
@@ -145,10 +145,10 @@ func TestSessionRepeatWakeWhileListeningOnlyResets(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智\n再讲一个故事\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t)                                      // hello
-	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	fs.nextReceived(t)                                        // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)   // 唤醒上报
 	wantDetect(t, fs.nextReceived(t), "再讲一个故事", fs.sessionID) // 查询
-	eventually(t, func() bool { // 已进入待输入态
+	eventually(t, func() bool {                               // 已进入待输入态
 		return strings.Count(out.String(), "待输入> ") >= 2
 	})
 
@@ -218,9 +218,9 @@ func TestSessionPlaybackAfterBargeInRestartsCleanStream(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智，再讲一个\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t) // abort
-	fs.nextReceived(t) // 新唤醒上报
-	fs.nextReceived(t) // 新查询
+	fs.nextReceived(t)                                         // abort
+	fs.nextReceived(t)                                         // 新唤醒上报
+	fs.nextReceived(t)                                         // 新查询
 	fs.send(t, map[string]any{"type": "tts", "state": "stop"}) // 打断确认
 
 	// 新一轮 TTS（新唤醒的应答）：起播 + 音频 + 正常收尾。
@@ -287,8 +287,8 @@ func TestSessionSpeakingQueryWithoutWakeWordInterrupts(t *testing.T) {
 	if _, err := io.WriteString(stdin, "小智，讲个长故事\n"); err != nil {
 		t.Fatalf("写入脚本输入失败: %v", err)
 	}
-	fs.nextReceived(t)                                      // hello
-	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	fs.nextReceived(t)                                       // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID)  // 唤醒上报
 	wantDetect(t, fs.nextReceived(t), "讲个长故事", fs.sessionID) // 查询
 
 	fs.send(t, map[string]any{"type": "tts", "state": "start"})
