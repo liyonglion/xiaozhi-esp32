@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -104,6 +105,30 @@ func TestSessionReconnectFailureStaysIdleAndRetryable(t *testing.T) {
 	}
 	if err := waitDone(t, done); err != nil {
 		t.Fatalf("重连失败后 exit 应干净退出, 实际: %v", err)
+	}
+}
+
+// 断线清理须一并清 aborting：该标记只对当前连接的旧轮音频有意义，
+// 跨连接存活会把重连后新会话的音频误当在途旧轮丢弃。
+func TestSessionHandleDisconnectClearsAborting(t *testing.T) {
+	sess := NewSession(Config{URL: "ws://unused"}, strings.NewReader("exit\n"), &lockedBuffer{}, nil, &fakePlayer{})
+	sess.mu.Lock()
+	sess.aborting = true // 打断已发出、tts stop 确认未到时连接断开
+	sess.state = StateSpeaking
+	sess.mu.Unlock()
+
+	sess.handleDisconnect(errors.New("connection reset"))
+
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	if sess.aborting {
+		t.Error("断线后 aborting 应被清理，不应跨连接存活")
+	}
+	if sess.state != StateIdle {
+		t.Errorf("断线后状态 = %v, 期望回待唤醒态", sess.state)
+	}
+	if !sess.connDead {
+		t.Error("断线后 connDead 应置位（下次唤醒触发重连）")
 	}
 }
 

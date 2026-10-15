@@ -494,6 +494,31 @@ func TestSessionOverlongLineRejectedAndREPLSurvives(t *testing.T) {
 	}
 }
 
+// goodbye 帧（WS 协议本无，v0.x 旧 opcode 遗留）的防御性兜底：
+// 一行本地化提示，不打原始 JSON，REPL 不受影响。
+func TestSessionGoodbyeFramePrintsFriendlyLine(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	fs.nextReceived(t) // hello
+	fs.send(t, map[string]any{"type": "goodbye", "session_id": fs.sessionID})
+	eventually(t, func() bool { return strings.Contains(out.String(), "会话已结束") })
+	if got := out.String(); strings.Contains(got, "其他消息") {
+		t.Errorf("goodbye 不应落入默认分支打原始 JSON, 实际输出:\n%s", got)
+	}
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("goodbye 后 exit 应干净退出, 实际: %v", err)
+	}
+}
+
 // sendJSON 持 writeMu 写 WS：对端升级后从不读时，写超时必须让发送以错误返回
 // 而非无限阻塞——否则 REPL 与 MCP 应答都会被一次卡死的写冻住。
 func TestSessionSendJSONWriteDeadlineUnblocksFrozenPeer(t *testing.T) {

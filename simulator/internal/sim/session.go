@@ -341,6 +341,7 @@ func (s *Session) handleDisconnect(cause error) {
 	if !closing {
 		s.connDead = true
 		s.state = StateIdle
+		s.aborting = false // 该标记只对当前连接的在途旧轮音频有意义，不跨连接存活
 	}
 	s.mu.Unlock()
 	if closing {
@@ -372,6 +373,10 @@ func (s *Session) handleServerText(data []byte) {
 		s.handleMCP(msg)
 	case "hello":
 		// 握手已在 Run 内处理，忽略重复 hello。
+	case "goodbye":
+		// WS 协议本无 goodbye（v0.x 旧 opcode 遗留）——防御性兜底：
+		// 一行本地化提示，不打原始 JSON，也不实现协议行为。
+		s.printf("会话已结束（goodbye）\n")
 	default:
 		s.printf("其他消息: %s\n", data)
 	}
