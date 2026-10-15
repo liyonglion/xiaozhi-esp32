@@ -236,3 +236,33 @@ func TestBootOTARetriesThenExitsFriendly(t *testing.T) {
 		t.Errorf("终端应可见重试进度, 实际输出:\n%s", got)
 	}
 }
+
+// 响应含 mqtt 节（server 配置了 mqtt_gateway）：明确报不支持 MQTT 模式退出，且不重试。
+func TestBootOTARejectsMQTTMode(t *testing.T) {
+	fs := newFakeServer(t)
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		return http.StatusOK, otaResponseBody(fs.wsURL, "", true)
+	})
+	stdinR, _ := scriptStdin(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{DeviceID: "de:ad:be:ef:ca:fe", ClientID: "0f3a7c2e-9b41-4d8a-a6d5-3e1f2b4c5d6e"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, &lockedBuffer{}, nil, nil)
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("超时：mqtt 节未导致 Boot 退出")
+	}
+	if err == nil {
+		t.Fatal("mqtt 节应使 Boot 返回错误")
+	}
+	if !strings.Contains(err.Error(), "MQTT") {
+		t.Errorf("退出错误应明确报不支持 MQTT 模式, 实际: %v", err)
+	}
+	if got := ota.count(); got != 1 {
+		t.Errorf("mqtt 节是明确答复, 不应重试（期望 1 个请求）, 实收 %d 个", got)
+	}
+}

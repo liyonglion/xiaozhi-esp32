@@ -3,11 +3,15 @@ package sim
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 )
+
+// errMQTTMode OTA 响应含 mqtt 节（server 配置了 mqtt_gateway）：模拟器仅支持 WebSocket 模式。
+var errMQTTMode = errors.New("不支持 MQTT 模式")
 
 // SimulatorVersion 模拟器版本：OTA 的 User-Agent 与 body application.version 共用。
 const SimulatorVersion = "0.1.0"
@@ -60,6 +64,9 @@ func checkOTA(cfg Config, ota OTAConfig, log io.Writer) (*wsEndpoint, error) {
 		if err == nil {
 			return ep, nil
 		}
+		if errors.Is(err, errMQTTMode) {
+			return nil, fmt.Errorf("服务器下发了 MQTT 接入配置，模拟器不支持 MQTT 模式（仅支持 WebSocket）: %w", err)
+		}
 		lastErr = err
 	}
 	return nil, fmt.Errorf("OTA 检查失败，已重试 %d 次: %w — 确认 --ota-url 地址正确且 server 已启动", otaRetries, lastErr)
@@ -95,9 +102,13 @@ func otaAttempt(cfg Config, otaURL string) (*wsEndpoint, error) {
 			URL   string `json:"url"`
 			Token string `json:"token"`
 		} `json:"websocket"`
+		MQTT json.RawMessage `json:"mqtt"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
 		return nil, fmt.Errorf("解析 OTA 响应失败: %w", err)
+	}
+	if len(parsed.MQTT) > 0 && string(parsed.MQTT) != "null" {
+		return nil, fmt.Errorf("OTA 响应含 mqtt 节: %w", errMQTTMode)
 	}
 	if parsed.Websocket.URL == "" {
 		return nil, fmt.Errorf("OTA 响应缺少 websocket.url（%s）", otaURL)
