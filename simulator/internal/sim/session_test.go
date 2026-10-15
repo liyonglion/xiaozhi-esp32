@@ -457,6 +457,43 @@ func waitDone(t *testing.T, done chan error) error {
 	}
 }
 
+// 粘贴超长行（旧 bufio.Scanner 的 64KiB 上限会崩整个 REPL）：
+// 友好提示 + 拒发，REPL 不退出，后续输入照常处理。
+func TestSessionOverlongLineRejectedAndREPLSurvives(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	// 40K 个汉字 ≈ 120KiB UTF-8，远超 64KiB 上限。
+	if _, err := io.WriteString(stdin, strings.Repeat("超", 40*1024)+"\n"); err != nil {
+		t.Fatalf("写入超长行失败: %v", err)
+	}
+	eventually(t, func() bool { return strings.Contains(out.String(), "已忽略") })
+
+	if _, err := io.WriteString(stdin, "小智，你好\nexit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                      // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 超长行之后的唤醒照常
+	wantDetect(t, fs.nextReceived(t), "你好", fs.sessionID)
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("超长行不应崩 REPL, 实际: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "64 KiB") {
+		t.Errorf("提示应说明长度上限, 实际输出:\n%s", got)
+	}
+	// 超长行本身未发给 server。
+	select {
+	case msg := <-fs.received:
+		t.Errorf("超长行不应作为消息发送, 却收到: %v", msg)
+	default:
+	}
+}
+
 // sendJSON 持 writeMu 写 WS：对端升级后从不读时，写超时必须让发送以错误返回
 // 而非无限阻塞——否则 REPL 与 MCP 应答都会被一次卡死的写冻住。
 func TestSessionSendJSONWriteDeadlineUnblocksFrozenPeer(t *testing.T) {

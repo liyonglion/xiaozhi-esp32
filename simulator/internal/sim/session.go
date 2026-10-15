@@ -201,26 +201,37 @@ func (s *Session) handshake() error {
 	return nil
 }
 
+// maxInputBytes 单行输入的长度上限。超出给提示并拒发（选择拒发而非截断：
+// 截断后的半句话作为查询发给 server 更容易造成误解）。上限与旧
+// bufio.Scanner 的 64KiB 一致——区别是超限不再崩掉整个 REPL。
+const maxInputBytes = 64 << 10
+
 // repl 读取输入行直到 exit/quit 或 EOF。
+// 用 bufio.Reader 而非 Scanner：Scanner 的 64KiB 行长上限超限时直接报错
+// 退出，粘贴超长行会崩 REPL；Reader 无行长上限，超长行在应用层拒发。
 func (s *Session) repl() error {
-	scanner := bufio.NewScanner(s.in)
+	reader := bufio.NewReader(s.in)
 	s.showPrompt()
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			s.showPrompt()
-			continue
+	for {
+		raw, err := reader.ReadString('\n')
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("读取输入失败: %w", err)
 		}
-		if line == "exit" || line == "quit" {
-			return nil
+		if line := strings.TrimSpace(raw); line != "" {
+			switch {
+			case line == "exit" || line == "quit":
+				return nil
+			case len(line) > maxInputBytes:
+				s.printf("（提示）输入行超过 %d KiB 上限，已忽略——请拆分后再发\n", maxInputBytes>>10)
+			default:
+				s.handleInput(line)
+			}
 		}
-		s.handleInput(line)
+		if err == io.EOF {
+			return nil // EOF（Ctrl-D），无换行的末行已在上方处理
+		}
 		s.showPrompt()
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("读取输入失败: %w", err)
-	}
-	return nil // EOF（Ctrl-D）
 }
 
 // handleInput 按当前状态处理一行输入。
