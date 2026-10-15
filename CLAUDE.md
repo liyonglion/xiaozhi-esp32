@@ -23,3 +23,17 @@
 ## 服务器
 
 - 自建 xiaozhi 服务器：14.103.201.147（OTA 端口 8003、TTS 适配器、assets 有坑，详见全局记忆 xiaozhi-selfhosted-deployment.md）
+
+## Agent skills
+
+### Issue tracker
+
+Issues 记录在本 fork（liyonglion/xiaozhi-esp32）的 GitHub Issues，用 gh CLI 读写。见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+保持默认五个标签（needs-triage / needs-info / ready-for-agent / ready-for-human / wontfix）。见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文：根目录 `GLOSSARY.md` + `docs/adr/`。见 `docs/agents/domain.md`。
