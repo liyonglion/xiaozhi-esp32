@@ -53,13 +53,6 @@ type Player interface {
 	Stop()
 }
 
-// discardPlayer 丢弃所有帧（测试与非音频环境的兜底）。
-type discardPlayer struct{}
-
-func (discardPlayer) Play([]byte) {}
-func (discardPlayer) Finish()     {}
-func (discardPlayer) Stop()       {}
-
 // Session 会话核心：持有 WS 连接与 REPL 循环。
 // stdin/stdout/verbose/播放器均为注入点，是全项目唯一测试缝合点。
 type Session struct {
@@ -118,6 +111,7 @@ func (s *Session) Run() error {
 	s.mu.Unlock()
 	conn.Close()
 	s.wg.Wait()
+	s.player.Stop() // 读循环已停：清理可能仍在播放的进程（exit/EOF 中途退出的情形）
 	return err
 }
 
