@@ -68,6 +68,7 @@ type fakeServer struct {
 
 	mu       sync.Mutex
 	query    url.Values
+	conn     *websocket.Conn
 	received chan map[string]any
 }
 
@@ -87,6 +88,9 @@ func newFakeServer(t *testing.T) *fakeServer {
 		if err != nil {
 			return
 		}
+		fs.mu.Lock()
+		fs.conn = conn
+		fs.mu.Unlock()
 		defer conn.Close()
 		for {
 			msgType, data, err := conn.ReadMessage()
@@ -123,6 +127,34 @@ func newFakeServer(t *testing.T) *fakeServer {
 	t.Cleanup(fs.srv.Close)
 	fs.wsURL = "ws" + strings.TrimPrefix(fs.srv.URL, "http")
 	return fs
+}
+
+// send 从 server 侧下发一条文本帧。
+func (fs *fakeServer) send(t *testing.T, msg map[string]any) {
+	t.Helper()
+	fs.mu.Lock()
+	conn := fs.conn
+	fs.mu.Unlock()
+	if conn == nil {
+		t.Fatal("假 server 尚未完成 WebSocket 升级")
+	}
+	if err := conn.WriteJSON(msg); err != nil {
+		t.Fatalf("假 server 下发消息失败: %v", err)
+	}
+}
+
+// sendBinary 从 server 侧下发一条二进制帧（模拟 opus 包）。
+func (fs *fakeServer) sendBinary(t *testing.T, data []byte) {
+	t.Helper()
+	fs.mu.Lock()
+	conn := fs.conn
+	fs.mu.Unlock()
+	if conn == nil {
+		t.Fatal("假 server 尚未完成 WebSocket 升级")
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+		t.Fatalf("假 server 下发二进制帧失败: %v", err)
+	}
 }
 
 // nextReceived 等待下一条 server 收到的文本帧，超时失败。
@@ -344,5 +376,67 @@ func waitDone(t *testing.T, done chan error) error {
 	case <-time.After(2 * time.Second):
 		t.Fatal("超时：Session 未退出")
 		return nil
+	}
+}
+
+// server 下发一轮完整回复：stt/情绪/字幕带前缀打印，
+// tts start/stop 驱动状态提示符（待输入→播放中→待唤醒），opus 帧转发给播放器。
+func TestSessionServerReplyDrivesPromptsAndPrinting(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	out := &lockedBuffer{}
+	player := &fakePlayer{}
+	sess := newTestSession(t, fs, out, nil, player, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	if _, err := io.WriteString(stdin, "小智，你好\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                      // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	wantDetect(t, fs.nextReceived(t), "你好", fs.sessionID)   // 查询
+
+	opusFrame := []byte{0x00, 0x01, 0x02, 0x03}
+	fs.send(t, map[string]any{"type": "stt", "text": "小智，你好"})
+	fs.send(t, map[string]any{"type": "tts", "state": "start"})
+	fs.send(t, map[string]any{"type": "llm", "text": "😊", "emotion": "happy"})
+	fs.send(t, map[string]any{"type": "tts", "state": "sentence_start", "text": "嘿，你好呀"})
+	fs.sendBinary(t, opusFrame)
+	fs.send(t, map[string]any{"type": "tts", "state": "stop"})
+
+	eventually(t, func() bool {
+		got := out.String()
+		return strings.Contains(got, "stt: 小智，你好") &&
+			strings.Contains(got, "情绪: happy 😊") &&
+			strings.Contains(got, "字幕: 嘿，你好呀") &&
+			strings.Contains(got, "待唤醒> \n")
+	})
+
+	got := out.String()
+	// 提示符顺序：待唤醒 → 待输入 → 播放中 → 待唤醒。
+	at := strings.Index(got, "待唤醒> \n")
+	for _, want := range []string{"待输入> \n", "播放中> \n", "待唤醒> \n"} {
+		next := strings.Index(got[at+1:], want)
+		if next < 0 {
+			t.Fatalf("提示符顺序不符，%q 未出现在 %q 之后，实际输出:\n%s", want, got[at:], got)
+		}
+		at += 1 + next
+	}
+
+	// 二进制 opus 帧应原样到达播放器，tts stop 触发 Stop。
+	frames, stops := player.snapshot()
+	if len(frames) != 1 || string(frames[0]) != string(opusFrame) {
+		t.Errorf("播放器应收到的 opus 帧 = %v, 实际 %v", [][]byte{opusFrame}, frames)
+	}
+	if stops < 1 {
+		t.Error("tts stop 后播放器 Stop 未被调用")
+	}
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
 	}
 }

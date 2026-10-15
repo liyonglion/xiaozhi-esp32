@@ -273,12 +273,14 @@ func (s *Session) handleTTS(msg map[string]any) {
 	switch msg["state"] {
 	case "start":
 		s.setState(StateSpeaking)
+		s.showPrompt() // REPL 正阻塞在输入上，立即刷新提示符
 	case "sentence_start":
 		text, _ := msg["text"].(string)
 		s.printf("字幕: %s\n", text)
 	case "stop":
 		s.player.Stop()
 		s.setState(StateIdle)
+		s.showPrompt()
 	}
 }
 
