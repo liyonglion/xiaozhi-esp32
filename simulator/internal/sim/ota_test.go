@@ -117,3 +117,29 @@ func TestBootOTAResolvesEndpointThenConnectsWithBearer(t *testing.T) {
 		t.Fatalf("Boot 返回错误: %v", err)
 	}
 }
+
+// --url 直连是 OTA 检查的逃生口：给出时假 OTA 端点零请求。
+func TestBootURLSkipsOTAEntirely(t *testing.T) {
+	fs := newFakeServer(t)
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		return http.StatusOK, otaResponseBody(fs.wsURL, "", false)
+	})
+	stdinR, stdin := scriptStdin(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{URL: fs.wsURL, DeviceID: "de:ad:be:ef:ca:fe", ClientID: "0f3a7c2e-9b41-4d8a-a6d5-3e1f2b4c5d6e"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, &lockedBuffer{}, nil, nil)
+	}()
+
+	if _, err := io.WriteString(stdin, "小智\nexit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                      // hello：直连假 server
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 会话可用
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Boot 返回错误: %v", err)
+	}
+	if got := ota.count(); got != 0 {
+		t.Errorf("--url 直连时假 OTA 端点应收 0 个请求, 实收 %d 个", got)
+	}
+}
