@@ -266,3 +266,27 @@ func TestBootOTARejectsMQTTMode(t *testing.T) {
 		t.Errorf("mqtt 节是明确答复, 不应重试（期望 1 个请求）, 实收 %d 个", got)
 	}
 }
+
+// auth 关闭的部署 token 为空串：连接应省略 Authorization 头。
+func TestBootOTAEmptyTokenOmitsAuthorization(t *testing.T) {
+	fs := newFakeServer(t)
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		return http.StatusOK, otaResponseBody(fs.wsURL, "", false)
+	})
+	stdinR, stdin := scriptStdin(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{DeviceID: "de:ad:be:ef:ca:fe", ClientID: "0f3a7c2e-9b41-4d8a-a6d5-3e1f2b4c5d6e"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, &lockedBuffer{}, nil, nil)
+	}()
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Boot 返回错误: %v", err)
+	}
+	if got := fs.authorization(t); got != "" {
+		t.Errorf("token 为空时应省略 Authorization 头, 实际 %q", got)
+	}
+}
