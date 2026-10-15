@@ -113,9 +113,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 					"audio_params": map[string]any{"format": "opus", "sample_rate": 24000, "channels": 1, "frame_duration": 60},
 					"session_id":   fs.sessionID,
 				}
-				if err := conn.WriteJSON(resp); err != nil {
-					t.Errorf("假 server 发送 hello 应答失败: %v", err)
-				}
+				writeJSON(t, conn, resp)
 			}
 			select {
 			case fs.received <- msg:
@@ -129,6 +127,19 @@ func newFakeServer(t *testing.T) *fakeServer {
 	return fs
 }
 
+// writeJSON 用 Marshal+WriteMessage 下发，模拟真实 server 的线上格式
+// （json.dumps 无尾随换行；gorilla 的 WriteJSON 会多带一个 \n）。
+func writeJSON(t *testing.T, conn *websocket.Conn, msg map[string]any) {
+	t.Helper()
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("假 server 序列化消息失败: %v", err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatalf("假 server 下发消息失败: %v", err)
+	}
+}
+
 // send 从 server 侧下发一条文本帧。
 func (fs *fakeServer) send(t *testing.T, msg map[string]any) {
 	t.Helper()
@@ -138,9 +149,7 @@ func (fs *fakeServer) send(t *testing.T, msg map[string]any) {
 	if conn == nil {
 		t.Fatal("假 server 尚未完成 WebSocket 升级")
 	}
-	if err := conn.WriteJSON(msg); err != nil {
-		t.Fatalf("假 server 下发消息失败: %v", err)
-	}
+	writeJSON(t, conn, msg)
 }
 
 // sendBinary 从 server 侧下发一条二进制帧（模拟 opus 包）。
@@ -431,6 +440,66 @@ func TestSessionServerReplyDrivesPromptsAndPrinting(t *testing.T) {
 	}
 	if stops < 1 {
 		t.Error("tts stop 后播放器 Stop 未被调用")
+	}
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
+	}
+}
+
+// --verbose 打印收发双方的原始 JSON 帧。
+func TestSessionVerboseLogsRawFrames(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	verbose := &lockedBuffer{}
+	sess := newTestSession(t, fs, &lockedBuffer{}, verbose, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	if _, err := io.WriteString(stdin, "小智\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                      // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	fs.send(t, map[string]any{"type": "stt", "text": "小智"})
+	eventually(t, func() bool { return strings.Contains(verbose.String(), `"type":"stt"`) })
+
+	// 逐行解析 verbose 输出：方向 + 可解析 JSON。
+	sent, received := 0, 0
+	for _, line := range strings.Split(strings.TrimSpace(verbose.String()), "\n") {
+		var dir string
+		var raw string
+		switch {
+		case strings.HasPrefix(line, "→ "):
+			dir, raw = "→", strings.TrimPrefix(line, "→ ")
+		case strings.HasPrefix(line, "← "):
+			dir, raw = "←", strings.TrimPrefix(line, "← ")
+		default:
+			t.Errorf("verbose 行缺少方向前缀: %q", line)
+			continue
+		}
+		var msg map[string]any
+		if err := json.Unmarshal([]byte(raw), &msg); err != nil {
+			t.Errorf("verbose 行不是合法 JSON: %q", line)
+			continue
+		}
+		if dir == "→" {
+			sent++
+		} else {
+			received++
+			if msg["type"] == "hello" && msg["session_id"] != fs.sessionID {
+				t.Errorf("verbose 下行 hello 的 session_id = %v, 期望 %s", msg["session_id"], fs.sessionID)
+			}
+		}
+	}
+	if sent < 2 { // 至少：发出的 hello + 唤醒上报
+		t.Errorf("verbose 应记录至少 2 条上行帧, 实际 %d:\n%s", sent, verbose.String())
+	}
+	if received < 2 { // 至少：hello 应答 + stt
+		t.Errorf("verbose 应记录至少 2 条下行帧, 实际 %d:\n%s", received, verbose.String())
 	}
 
 	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
