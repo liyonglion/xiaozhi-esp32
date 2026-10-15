@@ -274,8 +274,8 @@ func TestSessionHelloHandshakeAndWakeFlow(t *testing.T) {
 	if features == nil {
 		t.Fatalf("hello 缺少 features: %v", hello)
 	}
-	if got, _ := features["mcp"].(bool); got {
-		t.Errorf("hello features.mcp = true, 本票应为 false（#5 接管）")
+	if got, _ := features["mcp"].(bool); !got {
+		t.Errorf("hello features.mcp = false, 期望 true（声明支持 MCP，server 随即下发 initialize）")
 	}
 	if got, _ := features["aec"].(bool); got {
 		t.Errorf("hello features.aec = true, 期望 false")

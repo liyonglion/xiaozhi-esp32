@@ -69,8 +69,9 @@ type Session struct {
 	sessionID string
 	closing   bool
 
-	conn *websocket.Conn
-	wg   sync.WaitGroup
+	writeMu sync.Mutex // 串行化 WS 写：REPL 与 readLoop（MCP 应答）都可能发帧
+	conn    *websocket.Conn
+	wg      sync.WaitGroup
 }
 
 // NewSession 构造会话。verbose 为 nil 时关闭原始帧日志。
@@ -139,7 +140,7 @@ func (s *Session) handshake() error {
 			"channels":       1,
 			"frame_duration": 60,
 		},
-		"features": map[string]any{"mcp": false, "aec": false},
+		"features": map[string]any{"mcp": true, "aec": false},
 	}
 	if err := s.sendJSON(hello); err != nil {
 		return fmt.Errorf("发送 hello 失败: %w", err)
@@ -261,6 +262,8 @@ func (s *Session) handleServerText(data []byte) {
 		s.printf("情绪: %s %s\n", emotion, text)
 	case "tts":
 		s.handleTTS(msg)
+	case "mcp":
+		s.handleMCP(msg)
 	case "hello":
 		// 握手已在 Run 内处理，忽略重复 hello。
 	default:
@@ -311,7 +314,10 @@ func (s *Session) sendJSON(msg map[string]any) error {
 	if err != nil {
 		return fmt.Errorf("序列化 %v 消息失败: %w", msg["type"], err)
 	}
-	if err := s.conn.WriteMessage(websocket.TextMessage, data); err != nil {
+	s.writeMu.Lock()
+	err = s.conn.WriteMessage(websocket.TextMessage, data)
+	s.writeMu.Unlock()
+	if err != nil {
 		return fmt.Errorf("发送 %v 消息失败: %w", msg["type"], err)
 	}
 	s.logFrame("→", data)
