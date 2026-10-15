@@ -68,6 +68,7 @@ type fakeServer struct {
 
 	mu       sync.Mutex
 	query    url.Values
+	header   http.Header
 	conn     *websocket.Conn
 	received chan map[string]any
 }
@@ -83,6 +84,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 	fs.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fs.mu.Lock()
 		fs.query = r.URL.Query()
+		fs.header = r.Header
 		fs.mu.Unlock()
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -186,6 +188,17 @@ func (fs *fakeServer) queryValues(t *testing.T) url.Values {
 		t.Fatal("假 server 尚未收到连接请求")
 	}
 	return fs.query
+}
+
+// authorization 返回升级请求携带的 Authorization 头（未连接则失败）。
+func (fs *fakeServer) authorization(t *testing.T) string {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.header == nil {
+		t.Fatal("假 server 尚未收到连接请求")
+	}
+	return fs.header.Get("Authorization")
 }
 
 // scriptStdin 脚本化 stdin：返回读端（喂给 Session）与写端（测试按节奏写入输入行）。
