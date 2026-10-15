@@ -224,49 +224,51 @@ func (s *Session) repl() error {
 }
 
 // handleInput 按当前状态处理一行输入。
+// 播放态的任意输入行（无论是否带唤醒词）都走打断路径：旧 Ogg 流未停时，
+// 新旧两轮音频会挤进同一播放器。无唤醒词则只 abort + 查询，不发唤醒上报。
 func (s *Session) handleInput(line string) {
 	query, woke := ParseWake(line)
-	if woke {
-		if err := s.ensureConnected(); err != nil {
-			s.printf("重连失败: %v — 已回待唤醒态，下次唤醒将再试\n", err)
-			s.setState(StateIdle)
+	if !woke && s.currentState() != StateSpeaking {
+		if s.currentState() == StateIdle {
+			s.printf("（提示）未检测到唤醒词：请以「小智」或「你好小智」开头；输入 exit 退出\n")
 			return
 		}
-		was := s.currentState()
-		// 打断（barge-in）：播放态唤醒先立即停本地播放再发 abort，
-		// 随后照常按新唤醒处理（唤醒上报 + 可选查询）。
-		if was == StateSpeaking {
-			s.setAborting(true) // 先关门再停播：此后到达的在途旧轮音频直接丢弃
-			s.player.Stop()
-			if err := s.sendAbort(); err != nil {
-				s.reportSendError("打断（abort）", err)
-				return
-			}
+		if err := s.sendDetect(line); err != nil {
+			s.reportSendError("查询", err)
 		}
-		// 待输入态重复唤醒：只重置状态，不重复发唤醒上报、不发 abort；
-		// 同行携带的查询照常发送。
-		if was != StateListening {
-			if err := s.sendDetect(WakeReportText); err != nil {
-				s.reportSendError("唤醒上报", err)
-				return
-			}
-		}
-		if query != "" {
-			if err := s.sendDetect(query); err != nil {
-				s.reportSendError("查询", err)
-				return
-			}
-		}
-		s.setState(StateListening)
 		return
 	}
-	if s.currentState() == StateIdle {
-		s.printf("（提示）未检测到唤醒词：请以「小智」或「你好小智」开头；输入 exit 退出\n")
+	// 唤醒输入，或播放态的任意输入行：复用唤醒/打断路径。
+	if err := s.ensureConnected(); err != nil {
+		s.printf("重连失败: %v — 已回待唤醒态，下次唤醒将再试\n", err)
+		s.setState(StateIdle)
 		return
 	}
-	if err := s.sendDetect(line); err != nil {
-		s.reportSendError("查询", err)
+	was := s.currentState()
+	// 打断（barge-in）：先关门再停播（此后到达的在途旧轮音频直接丢弃），
+	// 再发 abort 让 server 结束本轮。
+	if was == StateSpeaking {
+		s.setAborting(true)
+		s.player.Stop()
+		if err := s.sendAbort(); err != nil {
+			s.reportSendError("打断（abort）", err)
+			return
+		}
 	}
+	// 唤醒上报仅在输入行带唤醒词时发送；待输入态重复唤醒只重置状态不重复上报。
+	if woke && was != StateListening {
+		if err := s.sendDetect(WakeReportText); err != nil {
+			s.reportSendError("唤醒上报", err)
+			return
+		}
+	}
+	if query != "" { // 无唤醒词时 query 即整行（播放态查询路径）
+		if err := s.sendDetect(query); err != nil {
+			s.reportSendError("查询", err)
+			return
+		}
+	}
+	s.setState(StateListening)
 }
 
 // sendAbort 发送打断消息；server 收到后回 tts stop 确认（见 handleTTS）。
