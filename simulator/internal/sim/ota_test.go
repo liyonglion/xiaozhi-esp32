@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -141,5 +142,61 @@ func TestBootURLSkipsOTAEntirely(t *testing.T) {
 	}
 	if got := ota.count(); got != 0 {
 		t.Errorf("--url 直连时假 OTA 端点应收 0 个请求, 实收 %d 个", got)
+	}
+}
+
+// OTA 请求契约：POST + 必需头（Device-Id/Client-Id/User-Agent/Activation-Version/
+// Content-Type）与 system-info 形态 body 的关键字段（server 读得宽松，但头必填）。
+func TestBootOTARequestShape(t *testing.T) {
+	fs := newFakeServer(t)
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		return http.StatusOK, otaResponseBody(fs.wsURL, "", false)
+	})
+	stdinR, stdin := scriptStdin(t)
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{DeviceID: "aa:bb:cc:dd:ee:ff", ClientID: "11111111-2222-3333-4444-555555555555"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, &lockedBuffer{}, nil, nil)
+	}()
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Boot 返回错误: %v", err)
+	}
+
+	req := ota.request(t, 0)
+	if req.Method != http.MethodPost {
+		t.Errorf("OTA 请求方法 = %q, 期望 POST", req.Method)
+	}
+	for header, want := range map[string]string{
+		"Device-Id":          "aa:bb:cc:dd:ee:ff",
+		"Client-Id":          "11111111-2222-3333-4444-555555555555",
+		"User-Agent":         "simulator/" + SimulatorVersion,
+		"Activation-Version": "1",
+		"Content-Type":       "application/json",
+	} {
+		if got := req.Header.Get(header); got != want {
+			t.Errorf("OTA 请求头 %s = %q, 期望 %q", header, got, want)
+		}
+	}
+
+	var body map[string]any
+	if err := json.Unmarshal(req.Body, &body); err != nil {
+		t.Fatalf("OTA body 不是合法 JSON: %v（%s）", err, req.Body)
+	}
+	if got, _ := body["mac_address"].(string); got != "aa:bb:cc:dd:ee:ff" {
+		t.Errorf("OTA body mac_address = %q, 期望与 Device-Id 一致", got)
+	}
+	if got, _ := body["uuid"].(string); got != "11111111-2222-3333-4444-555555555555" {
+		t.Errorf("OTA body uuid = %q, 期望与 Client-Id 一致", got)
+	}
+	app, _ := body["application"].(map[string]any)
+	if got, _ := app["version"].(string); app == nil || got != SimulatorVersion {
+		t.Errorf("OTA body application.version = %q, 期望 %q", got, SimulatorVersion)
+	}
+	board, _ := body["board"].(map[string]any)
+	if got, _ := board["type"].(string); board == nil || got != "simulator" {
+		t.Errorf("OTA body board.type = %q, 期望 simulator", got)
 	}
 }
