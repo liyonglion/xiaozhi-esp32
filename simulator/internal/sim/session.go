@@ -64,10 +64,11 @@ type Session struct {
 	verbose io.Writer
 	player  Player
 
-	mu        sync.Mutex // 保护 out/verbose/state/sessionID 的并发写
+	mu        sync.Mutex // 保护 out/verbose/state/sessionID/conn/connDead 的并发写
 	state     State
 	sessionID string
 	closing   bool
+	connDead  bool // readLoop 出错后置位：下次唤醒前需用缓存 url/token 重连
 
 	writeMu sync.Mutex // 串行化 WS 写：REPL 与 readLoop（MCP 应答）都可能发帧
 	conn    *websocket.Conn
@@ -85,10 +86,35 @@ func NewSession(cfg Config, in io.Reader, out io.Writer, verbose io.Writer, play
 }
 
 // Run 建立连接、完成 hello 握手并进入 REPL，直到 exit/quit 或 stdin EOF。
+// 连接中途断开不退出 REPL：回待唤醒态，下次唤醒自动用缓存配置重连（不重跑 OTA）。
 func (s *Session) Run() error {
-	wsURL, err := s.buildURL()
+	conn, err := s.connect()
 	if err != nil {
 		return err
+	}
+	s.wg.Add(1)
+	go s.readLoop(conn)
+
+	err = s.repl()
+
+	s.mu.Lock()
+	s.closing = true
+	cur := s.conn
+	s.mu.Unlock()
+	if cur != nil {
+		cur.Close() // 解除 readLoop 阻塞在 ReadMessage 的等待
+	}
+	s.wg.Wait()
+	s.player.Stop() // 读循环已停：清理可能仍在播放的进程（exit/EOF 中途退出的情形）
+	return err
+}
+
+// connect 用当前配置（url/token 来自启动时的 OTA 结果或 --url 直连）建连并完成 hello 握手。
+// 重连走同一入口：hello 是全新会话握手，先清掉旧 session_id。
+func (s *Session) connect() (*websocket.Conn, error) {
+	wsURL, err := s.buildURL()
+	if err != nil {
+		return nil, err
 	}
 	// token 非空才带 Authorization 头（auth 关闭的部署 token 为空串）。
 	var hdr http.Header
@@ -98,29 +124,22 @@ func (s *Session) Run() error {
 	conn, resp, err := (&websocket.Dialer{HandshakeTimeout: 10 * time.Second}).Dial(wsURL, hdr)
 	if err != nil {
 		if resp != nil {
-			return fmt.Errorf("连接服务器失败（%s，HTTP %d）: %w", wsURL, resp.StatusCode, err)
+			return nil, fmt.Errorf("连接服务器失败（%s，HTTP %d）: %w", wsURL, resp.StatusCode, err)
 		}
-		return fmt.Errorf("连接服务器失败（%s）: %w — 确认 server 已启动，或用 --url 指定地址", wsURL, err)
+		return nil, fmt.Errorf("连接服务器失败（%s）: %w — 确认 server 已启动，或用 --url 指定地址", wsURL, err)
 	}
+	s.mu.Lock()
+	s.sessionID = ""
 	s.conn = conn
-
+	s.mu.Unlock()
 	if err := s.handshake(); err != nil {
 		conn.Close()
-		return err
+		return nil, err
 	}
-
-	s.wg.Add(1)
-	go s.readLoop()
-
-	err = s.repl()
-
 	s.mu.Lock()
-	s.closing = true
+	s.connDead = false
 	s.mu.Unlock()
-	conn.Close()
-	s.wg.Wait()
-	s.player.Stop() // 读循环已停：清理可能仍在播放的进程（exit/EOF 中途退出的情形）
-	return err
+	return conn, nil
 }
 
 // buildURL 在端点上追加 device-id / client-id 查询参数。
@@ -207,6 +226,11 @@ func (s *Session) repl() error {
 func (s *Session) handleInput(line string) {
 	query, woke := ParseWake(line)
 	if woke {
+		if err := s.ensureConnected(); err != nil {
+			s.printf("重连失败: %v — 已回待唤醒态，下次唤醒将再试\n", err)
+			s.setState(StateIdle)
+			return
+		}
 		if err := s.sendDetect(WakeReportText); err != nil {
 			s.reportSendError("唤醒上报", err)
 			return
@@ -220,7 +244,7 @@ func (s *Session) handleInput(line string) {
 		s.setState(StateListening)
 		return
 	}
-	if s.stateNow() == StateIdle {
+	if s.currentState() == StateIdle {
 		s.printf("（提示）未检测到唤醒词：请以「小智」或「你好小智」开头；输入 exit 退出\n")
 		return
 	}
@@ -229,18 +253,34 @@ func (s *Session) handleInput(line string) {
 	}
 }
 
+// ensureConnected 在连接已断时用缓存的 url/token 重连并完整重走 hello 握手
+// （OTA 结果仅启动时获取一次，此处不重跑）；连接健康时直接返回。
+func (s *Session) ensureConnected() error {
+	s.mu.Lock()
+	dead := s.connDead
+	s.mu.Unlock()
+	if !dead {
+		return nil
+	}
+	conn, err := s.connect()
+	if err != nil {
+		return err
+	}
+	s.wg.Add(1)
+	go s.readLoop(conn)
+	return nil
+}
+
 // readLoop 消费 server 下发帧：文本帧分发打印，二进制 opus 帧交给播放器。
-func (s *Session) readLoop() {
+// 每个连接一个 readLoop；连接出错（server 主动断开/WS 中途错误）回待唤醒态并提示，
+// 由下次唤醒触发重连。
+func (s *Session) readLoop(conn *websocket.Conn) {
 	defer s.wg.Done()
+	defer conn.Close()
 	for {
-		msgType, data, err := s.conn.ReadMessage()
+		msgType, data, err := conn.ReadMessage()
 		if err != nil {
-			s.mu.Lock()
-			closing := s.closing
-			s.mu.Unlock()
-			if !closing {
-				s.printf("与服务器的连接已断开: %v（输入 exit 退出）\n", err)
-			}
+			s.handleDisconnect(err)
 			return
 		}
 		switch msgType {
@@ -251,6 +291,24 @@ func (s *Session) readLoop() {
 			s.handleServerText(data)
 		}
 	}
+}
+
+// handleDisconnect 处理连接断开：退出中的断开静默；否则停掉本地播放、
+// 回待唤醒态并给一行含原因的提示。
+func (s *Session) handleDisconnect(cause error) {
+	s.mu.Lock()
+	closing := s.closing
+	if !closing {
+		s.connDead = true
+		s.state = StateIdle
+	}
+	s.mu.Unlock()
+	if closing {
+		return
+	}
+	s.player.Stop()
+	s.printf("与服务器的连接已断开: %v — 已回待唤醒态，下次唤醒将自动重连\n", cause)
+	s.showPrompt()
 }
 
 // handleServerText 分发 server 文本帧并打印（stt:/情绪:/字幕: 前缀）。
@@ -302,8 +360,8 @@ func (s *Session) setState(next State) {
 	s.state = next
 }
 
-// stateNow 加锁读状态：REPL goroutine 与 readLoop 的 setState 并发访问。
-func (s *Session) stateNow() State {
+// currentState 读取状态（readLoop 与 REPL 并发读写，须持锁）。
+func (s *Session) currentState() State {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.state
@@ -355,7 +413,7 @@ func (s *Session) showPrompt() {
 }
 
 func (s *Session) reportSendError(what string, err error) {
-	s.printf("发送%s失败: %v — 连接可能已断开，输入 exit 退出\n", what, err)
+	s.printf("发送%s失败: %v — 连接可能已断开，下次唤醒将自动重连\n", what, err)
 }
 
 // logFrame 在 --verbose 下打印原始收发帧。
