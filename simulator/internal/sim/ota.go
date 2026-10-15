@@ -39,15 +39,41 @@ func Boot(cfg Config, ota OTAConfig, in io.Reader, out io.Writer, verbose io.Wri
 	return NewSession(cfg, in, out, verbose, player).Run()
 }
 
+// otaRetries 初次失败后的重试次数（指数退避：Backoff×1、×2、×4）。
+const otaRetries = 3
+
 // checkOTA POST system-info 形态 body 到 OTA 端点，解析 websocket{url,token}。
+// 传输层/HTTP 层失败按指数退避重试 otaRetries 次；server 明确答复的不一致（如 mqtt 节）不重试。
 func checkOTA(cfg Config, ota OTAConfig, log io.Writer) (*wsEndpoint, error) {
+	backoff := ota.Backoff
+	if backoff <= 0 {
+		backoff = 500 * time.Millisecond
+	}
+	var lastErr error
+	for attempt := 0; attempt <= otaRetries; attempt++ {
+		if attempt > 0 {
+			wait := backoff << (attempt - 1)
+			fmt.Fprintf(log, "OTA 检查失败: %v — %s 后重试（%d/%d）\n", lastErr, wait, attempt, otaRetries)
+			time.Sleep(wait)
+		}
+		ep, err := otaAttempt(cfg, ota.OTAURL)
+		if err == nil {
+			return ep, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("OTA 检查失败，已重试 %d 次: %w — 确认 --ota-url 地址正确且 server 已启动", otaRetries, lastErr)
+}
+
+// otaAttempt 单次 OTA 请求。
+func otaAttempt(cfg Config, otaURL string) (*wsEndpoint, error) {
 	data, err := json.Marshal(systemInfo(cfg))
 	if err != nil {
 		return nil, fmt.Errorf("构造 OTA 请求体失败: %w", err)
 	}
-	req, err := http.NewRequest(http.MethodPost, ota.OTAURL, bytes.NewReader(data))
+	req, err := http.NewRequest(http.MethodPost, otaURL, bytes.NewReader(data))
 	if err != nil {
-		return nil, fmt.Errorf("无效的 OTA 地址 %q: %w", ota.OTAURL, err)
+		return nil, fmt.Errorf("无效的 OTA 地址 %q: %w", otaURL, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Device-Id", cfg.DeviceID)
@@ -57,11 +83,11 @@ func checkOTA(cfg Config, ota OTAConfig, log io.Writer) (*wsEndpoint, error) {
 
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("OTA 请求失败（%s）: %w", ota.OTAURL, err)
+		return nil, fmt.Errorf("OTA 请求失败（%s）: %w", otaURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OTA 端点返回 HTTP %d（%s）", resp.StatusCode, ota.OTAURL)
+		return nil, fmt.Errorf("OTA 端点返回 HTTP %d（%s）", resp.StatusCode, otaURL)
 	}
 
 	var parsed struct {
@@ -74,7 +100,7 @@ func checkOTA(cfg Config, ota OTAConfig, log io.Writer) (*wsEndpoint, error) {
 		return nil, fmt.Errorf("解析 OTA 响应失败: %w", err)
 	}
 	if parsed.Websocket.URL == "" {
-		return nil, fmt.Errorf("OTA 响应缺少 websocket.url（%s）", ota.OTAURL)
+		return nil, fmt.Errorf("OTA 响应缺少 websocket.url（%s）", otaURL)
 	}
 	return &wsEndpoint{URL: parsed.Websocket.URL, Token: parsed.Websocket.Token}, nil
 }

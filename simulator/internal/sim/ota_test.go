@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -198,5 +199,40 @@ func TestBootOTARequestShape(t *testing.T) {
 	board, _ := body["board"].(map[string]any)
 	if got, _ := board["type"].(string); board == nil || got != "simulator" {
 		t.Errorf("OTA body board.type = %q, 期望 simulator", got)
+	}
+}
+
+// OTA 持续失败：重试 3 次（共 1+3 个请求）后带明确信息退出，终端可见重试进度。
+func TestBootOTARetriesThenExitsFriendly(t *testing.T) {
+	ota := newFakeOTA(t, func(count int) (int, string) {
+		return http.StatusInternalServerError, `{"error":"boom"}`
+	})
+	stdinR, _ := scriptStdin(t)
+	out := &lockedBuffer{}
+	done := make(chan error, 1)
+	go func() {
+		done <- Boot(Config{DeviceID: "de:ad:be:ef:ca:fe", ClientID: "0f3a7c2e-9b41-4d8a-a6d5-3e1f2b4c5d6e"},
+			OTAConfig{OTAURL: ota.srv.URL, Backoff: time.Millisecond}, stdinR, out, nil, nil)
+	}()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("超时：OTA 反复失败后 Boot 未退出")
+	}
+	if err == nil {
+		t.Fatal("OTA 反复失败后 Boot 应返回错误")
+	}
+	if got := ota.count(); got != 1+3 {
+		t.Errorf("失败时应发起 1+3=4 个请求（初次+重试 3 次）, 实收 %d 个", got)
+	}
+	for _, want := range []string{"OTA", "3 次", "server"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("退出错误应含 %q（指向排查方向）, 实际: %v", want, err)
+		}
+	}
+	if got := out.String(); !strings.Contains(got, "重试") {
+		t.Errorf("终端应可见重试进度, 实际输出:\n%s", got)
 	}
 }
