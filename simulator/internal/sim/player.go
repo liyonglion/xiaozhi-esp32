@@ -118,7 +118,7 @@ func (p *ffplayPlayer) Finish() {
 	go func() { _ = cmd.Wait() }() // 等待播完可能阻塞数百毫秒，不卡读循环
 }
 
-// Stop 立即停止（打断预留，#6）：kill 进程并同步回收。
+// Stop 立即停止（打断）：kill 进程并同步回收。
 func (p *ffplayPlayer) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -156,8 +156,12 @@ func newOggPlayer(sink Player) *oggPlayer {
 
 // Play 封装一个裸 opus 包并转发给 sink。
 // 写 sink 在锁外：sink 阻塞（管道满）时 Stop 不被 Play 拖住。
-// ponytail: 打断与首轮写页存在毫秒级交错窗口（旧流尾页可能落入新进程），
-// #6 实测若出现跨流脏页再加代际计数。
+// #6 处置（b3f1353 遗留窗口）：session 侧以 aborting 标记丢弃在途旧轮帧后，
+// 交错窗口收窄为「已通过标记检查、尚在写 sink 的单个帧」，最坏后果是
+// ≤60ms 已打断音频的尾音落进一个会被下轮 Finish/Stop 回收的进程
+// （EPIPE 由 stdin 同一性守卫兜住）。代际计数关不掉它——除非把 sink 写入
+// 挪回锁内，那会让 Stop 排在管道阻塞的 Play 之后，违反「Stop 立即抢占」。
+// 交错容忍性由 TestOggPlayerStopDuringInFlightPlayLeavesNextRoundClean 钉住。
 func (p *oggPlayer) Play(frame []byte) {
 	p.mu.Lock()
 	if p.enc == nil {

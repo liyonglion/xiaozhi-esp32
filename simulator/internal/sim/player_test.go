@@ -177,6 +177,74 @@ func TestFFplayPlayerStopPreemptsBlockedPlay(t *testing.T) {
 	}
 }
 
+// TestOggPlayerStopDuringInFlightPlayLeavesNextRoundClean：打断与在途写页的
+// 交错窗口（b3f1353 标注、#6 处置）：Play 尚在写 sink 时 Stop 到达——
+// Stop 必须立即返回（不被在途写拖住），迟到的旧页写入后，
+// 下一轮仍重新起播新流（头页重发、换 serial）。
+func TestOggPlayerStopDuringInFlightPlayLeavesNextRoundClean(t *testing.T) {
+	inner := &fakePlayer{}
+	gate := &gatedPlayer{inner: inner, entered: make(chan struct{}), release: make(chan struct{})}
+	p := newOggPlayer(gate)
+
+	playDone := make(chan struct{})
+	go func() { defer close(playDone); p.Play([]byte{0x01}) }()
+	<-gate.entered // 首页写已进入 sink 且阻塞（打断恰在此时到达）
+
+	stopDone := make(chan struct{})
+	go func() { defer close(stopDone); p.Stop() }()
+	select {
+	case <-stopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("在途写页未返回时 Stop 被拖住：打断杠杆必须立即可用")
+	}
+
+	close(gate.release) // 放行迟到的旧页写入
+	select {
+	case <-playDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("放行后 Play 未返回")
+	}
+
+	// 下一轮（打断确认不收尾，新轮正常起播）：新流从头页开始。
+	p.Play([]byte{0x02})
+	frames, _, _ := inner.snapshot()
+	var all bytes.Buffer
+	for _, f := range frames {
+		all.Write(f)
+	}
+	pages := parseOggPages(t, all.Bytes())
+	if len(pages) != 6 { // 旧轮 头2+音频1；新轮 头2+音频1
+		t.Fatalf("两轮应共 6 页, 实际 %d", len(pages))
+	}
+	if !bytes.HasPrefix(pages[3].payload, []byte("OpusHead")) {
+		t.Errorf("新轮首页应为 OpusHead 重发, 实际 %q", pages[3].payload[:8])
+	}
+	if pages[3].seq != 0 || pages[3].serial == pages[0].serial {
+		t.Errorf("新轮头页 seq=%d serial 差异=%v, 期望 seq=0 且 serial 换新", pages[3].seq, pages[3].serial == pages[0].serial)
+	}
+	if !bytes.Equal(pages[5].payload, []byte{0x02}) {
+		t.Error("新轮音频页载荷与新包不一致")
+	}
+}
+
+// gatedPlayer 首次 Play 阻塞直到 release，用于脚本化「Stop 撞上在途写页」的交错。
+type gatedPlayer struct {
+	inner   *fakePlayer
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (g *gatedPlayer) Play(b []byte) {
+	g.once.Do(func() { close(g.entered) })
+	<-g.release
+	g.inner.Play(b)
+}
+
+func (g *gatedPlayer) Finish() { g.inner.Finish() }
+
+func (g *gatedPlayer) Stop() { g.inner.Stop() }
+
 // TestOggPlayerReissuesHeadersPerRound：oggPlayer 每轮重发头页、换 serial，
 // Finish/Stop 后下一包从新流开始。
 func TestOggPlayerReissuesHeadersPerRound(t *testing.T) {

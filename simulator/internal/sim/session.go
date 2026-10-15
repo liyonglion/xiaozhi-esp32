@@ -51,7 +51,7 @@ type Player interface {
 	Play(frame []byte)
 	// Finish 一轮 TTS 结束：收尾（关 stdin、回收进程），让已缓冲音频播完。
 	Finish()
-	// Stop 立即停（打断预留，#6）。
+	// Stop 立即停（打断：播放态唤醒时杀进程，不等余量播完）。
 	Stop()
 }
 
@@ -69,6 +69,7 @@ type Session struct {
 	sessionID string
 	closing   bool
 	connDead  bool // readLoop 出错后置位：下次唤醒前需用缓存 url/token 重连
+	aborting  bool // 打断待确认：丢弃在途旧轮音频，tts stop 确认或新 tts start 清除
 
 	writeMu sync.Mutex // 串行化 WS 写：REPL 与 readLoop（MCP 应答）都可能发帧
 	conn    *websocket.Conn
@@ -231,9 +232,24 @@ func (s *Session) handleInput(line string) {
 			s.setState(StateIdle)
 			return
 		}
-		if err := s.sendDetect(WakeReportText); err != nil {
-			s.reportSendError("唤醒上报", err)
-			return
+		was := s.currentState()
+		// 打断（barge-in）：播放态唤醒先立即停本地播放再发 abort，
+		// 随后照常按新唤醒处理（唤醒上报 + 可选查询）。
+		if was == StateSpeaking {
+			s.setAborting(true) // 先关门再停播：此后到达的在途旧轮音频直接丢弃
+			s.player.Stop()
+			if err := s.sendAbort(); err != nil {
+				s.reportSendError("打断（abort）", err)
+				return
+			}
+		}
+		// 待输入态重复唤醒：只重置状态，不重复发唤醒上报、不发 abort；
+		// 同行携带的查询照常发送。
+		if was != StateListening {
+			if err := s.sendDetect(WakeReportText); err != nil {
+				s.reportSendError("唤醒上报", err)
+				return
+			}
 		}
 		if query != "" {
 			if err := s.sendDetect(query); err != nil {
@@ -251,6 +267,14 @@ func (s *Session) handleInput(line string) {
 	if err := s.sendDetect(line); err != nil {
 		s.reportSendError("查询", err)
 	}
+}
+
+// sendAbort 发送打断消息；server 收到后回 tts stop 确认（见 handleTTS）。
+func (s *Session) sendAbort() error {
+	return s.sendJSON(map[string]any{
+		"type":   "abort",
+		"reason": "wake_word_detected",
+	})
 }
 
 // ensureConnected 在连接已断时用缓存的 url/token 重连并完整重走 hello 握手
@@ -285,6 +309,9 @@ func (s *Session) readLoop(conn *websocket.Conn) {
 		}
 		switch msgType {
 		case websocket.BinaryMessage:
+			if s.dropInflightOldRound() {
+				continue
+			}
 			s.player.Play(data)
 		case websocket.TextMessage:
 			s.logFrame("←", data)
@@ -341,16 +368,48 @@ func (s *Session) handleServerText(data []byte) {
 func (s *Session) handleTTS(msg map[string]any) {
 	switch msg["state"] {
 	case "start":
+		// 新一轮开始即解除丢弃（真实 server 按序处理：确认 stop 先于新轮 start；
+		// ponytail: 乱序 server 的确认 stop 会被误当新轮收尾，掐断新轮播放——
+		// 需要支持乱序 server 时再按轮次关联消息）。
+		s.setAborting(false)
 		s.setState(StateSpeaking)
 		s.showPrompt() // REPL 正阻塞在输入上，立即刷新提示符
 	case "sentence_start":
 		text, _ := msg["text"].(string)
 		s.printf("字幕: %s\n", text)
 	case "stop":
-		s.player.Finish() // 本轮 TTS 收尾：让余量播完；打断（#6）才用 Stop
+		if s.consumeAbortConfirm() {
+			return // 打断确认：收尾已在打断时用 Stop 完成，不再 Finish（防双重收尾）
+		}
+		s.player.Finish() // 本轮 TTS 收尾：让余量播完；打断才用 Stop（见 handleInput）
 		s.setState(StateIdle)
 		s.showPrompt()
 	}
+}
+
+// setAborting 设置/清除「打断待确认」标记。
+func (s *Session) setAborting(v bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.aborting = v
+}
+
+// dropInflightOldRound 报告当前二进制帧是否属于已被打断的旧轮（在途尾包），应丢弃。
+func (s *Session) dropInflightOldRound() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.aborting
+}
+
+// consumeAbortConfirm 消费打断确认：若正处于打断待确认，清标记并返回 true。
+func (s *Session) consumeAbortConfirm() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.aborting {
+		s.aborting = false
+		return true
+	}
+	return false
 }
 
 // setState 更新状态；来自 server 事件的状态变化立即刷新提示符。
