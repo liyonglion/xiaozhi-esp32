@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"net/url"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ type Config struct {
 	URL      string // WebSocket 端点，如 ws://127.0.0.1:8000/xiaozhi/v1/
 	DeviceID string // 模拟 MAC 形态设备标识
 	ClientID string // 固定 UUID 客户端标识
+	Token    string // OTA 下发的访问令牌；非空时连接携带 Authorization: Bearer
 }
 
 // State 模拟器 REPL 状态（术语见 GLOSSARY.md：待输入态/播放态）。
@@ -87,7 +89,12 @@ func (s *Session) Run() error {
 	if err != nil {
 		return err
 	}
-	conn, resp, err := (&websocket.Dialer{HandshakeTimeout: 10 * time.Second}).Dial(wsURL, nil)
+	// token 非空才带 Authorization 头（auth 关闭的部署 token 为空串）。
+	var hdr http.Header
+	if s.cfg.Token != "" {
+		hdr = http.Header{"Authorization": []string{"Bearer " + s.cfg.Token}}
+	}
+	conn, resp, err := (&websocket.Dialer{HandshakeTimeout: 10 * time.Second}).Dial(wsURL, hdr)
 	if err != nil {
 		if resp != nil {
 			return fmt.Errorf("连接服务器失败（%s，HTTP %d）: %w", wsURL, resp.StatusCode, err)
