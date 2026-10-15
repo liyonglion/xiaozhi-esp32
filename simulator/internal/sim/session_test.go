@@ -1,4 +1,4 @@
-package simulator
+package sim
 
 import (
 	"encoding/json"
@@ -419,7 +419,8 @@ func TestSessionServerReplyDrivesPromptsAndPrinting(t *testing.T) {
 		return strings.Contains(got, "stt: 小智，你好") &&
 			strings.Contains(got, "情绪: happy 😊") &&
 			strings.Contains(got, "字幕: 嘿，你好呀") &&
-			strings.Contains(got, "待唤醒> \n")
+			// 两次待唤醒：初始一次 + tts stop 后一次（同步点）。
+			strings.Count(got, "待唤醒> \n") >= 2
 	})
 
 	got := out.String()
