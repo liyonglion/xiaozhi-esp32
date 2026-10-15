@@ -45,17 +45,15 @@ func (st State) prompt() string {
 	}
 }
 
-// Player 是 TTS 音频出口。本票默认实现丢弃 opus 帧（#3 接管换 ffplay 流式播放）。
+// Player 是 TTS 音频出口。收到的是完整 Ogg Opus 封装字节流
+// （由 session 默认装配的 oggPlayer 封装，见 player.go）。
 type Player interface {
 	Play(frame []byte)
+	// Finish 一轮 TTS 结束：收尾（关 stdin、回收进程），让已缓冲音频播完。
+	Finish()
+	// Stop 立即停（打断预留，#6）。
 	Stop()
 }
-
-// discardPlayer 默认播放器：丢弃所有帧。
-type discardPlayer struct{}
-
-func (discardPlayer) Play([]byte) {}
-func (discardPlayer) Stop()       {}
 
 // Session 会话核心：持有 WS 连接与 REPL 循环。
 // stdin/stdout/verbose/播放器均为注入点，是全项目唯一测试缝合点。
@@ -77,12 +75,14 @@ type Session struct {
 	wg      sync.WaitGroup
 }
 
-// NewSession 构造会话。verbose 为 nil 时关闭原始帧日志。
+// NewSession 构造会话。verbose 为 nil 时关闭原始帧日志；
+// player 为 nil 时默认装配 ffplay 流式播放器。注入的播放器均被
+// Ogg Opus 封装层包装：Play 收到的是完整 Ogg 字节流。
 func NewSession(cfg Config, in io.Reader, out io.Writer, verbose io.Writer, player Player) *Session {
 	if player == nil {
-		player = discardPlayer{}
+		player = newFFplayPlayer(out, nil, nil)
 	}
-	return &Session{cfg: cfg, in: in, out: out, verbose: verbose, player: player}
+	return &Session{cfg: cfg, in: in, out: out, verbose: verbose, player: newOggPlayer(player)}
 }
 
 // Run 建立连接、完成 hello 握手并进入 REPL，直到 exit/quit 或 stdin EOF。
@@ -105,6 +105,7 @@ func (s *Session) Run() error {
 		cur.Close() // 解除 readLoop 阻塞在 ReadMessage 的等待
 	}
 	s.wg.Wait()
+	s.player.Stop() // 读循环已停：清理可能仍在播放的进程（exit/EOF 中途退出的情形）
 	return err
 }
 
@@ -346,7 +347,7 @@ func (s *Session) handleTTS(msg map[string]any) {
 		text, _ := msg["text"].(string)
 		s.printf("字幕: %s\n", text)
 	case "stop":
-		s.player.Stop()
+		s.player.Finish() // 本轮 TTS 收尾：让余量播完；打断（#6）才用 Stop
 		s.setState(StateIdle)
 		s.showPrompt()
 	}

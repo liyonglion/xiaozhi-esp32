@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,11 +36,12 @@ func (b *lockedBuffer) String() string {
 	return b.buf.String()
 }
 
-// fakePlayer 假播放器：记录收到的 opus 帧与 Stop 次数。
+// fakePlayer 假播放器：记录收到的帧、Finish 与 Stop 次数。
 type fakePlayer struct {
-	mu     sync.Mutex
-	frames [][]byte
-	stops  int
+	mu       sync.Mutex
+	frames   [][]byte
+	finishes int
+	stops    int
 }
 
 func (p *fakePlayer) Play(frame []byte) {
@@ -48,16 +50,22 @@ func (p *fakePlayer) Play(frame []byte) {
 	p.frames = append(p.frames, append([]byte(nil), frame...))
 }
 
+func (p *fakePlayer) Finish() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.finishes++
+}
+
 func (p *fakePlayer) Stop() {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.stops++
 }
 
-func (p *fakePlayer) snapshot() (frames [][]byte, stops int) {
+func (p *fakePlayer) snapshot() (frames [][]byte, finishes int, stops int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([][]byte(nil), p.frames...), p.stops
+	return append([][]byte(nil), p.frames...), p.finishes, p.stops
 }
 
 // fakeServer 进程内假 server：应答 hello、记录收到的文本帧与二进制帧。
@@ -493,13 +501,27 @@ func TestSessionServerReplyDrivesPromptsAndPrinting(t *testing.T) {
 		at += 1 + next
 	}
 
-	// 二进制 opus 帧应原样到达播放器，tts stop 触发 Stop。
-	frames, stops := player.snapshot()
-	if len(frames) != 1 || string(frames[0]) != string(opusFrame) {
-		t.Errorf("播放器应收到的 opus 帧 = %v, 实际 %v", [][]byte{opusFrame}, frames)
+	// 二进制 opus 帧应以 Ogg 页到达播放器，tts stop 触发 Finish。
+	frames, finishes, stops := player.snapshot()
+	var stream bytes.Buffer
+	for _, f := range frames {
+		stream.Write(f)
 	}
-	if stops < 1 {
-		t.Error("tts stop 后播放器 Stop 未被调用")
+	pages := parseOggPages(t, stream.Bytes())
+	var gotPacket bool
+	for _, pg := range pages {
+		if bytes.Equal(pg.payload, opusFrame) {
+			gotPacket = true
+		}
+	}
+	if !gotPacket {
+		t.Errorf("播放器收到的 Ogg 流应含原样 opus 包 %v, 实际 %d 页", opusFrame, len(pages))
+	}
+	if finishes < 1 {
+		t.Error("tts stop 后播放器 Finish 未被调用")
+	}
+	if stops != 0 {
+		t.Errorf("正常收尾不应调用 Stop（打断专用）, 实际 %d 次", stops)
 	}
 
 	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
@@ -560,6 +582,94 @@ func TestSessionVerboseLogsRawFrames(t *testing.T) {
 	}
 	if received < 2 { // 至少：hello 应答 + stt
 		t.Errorf("verbose 应记录至少 2 条下行帧, 实际 %d:\n%s", received, verbose.String())
+	}
+
+	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	if err := waitDone(t, done); err != nil {
+		t.Fatalf("Session.Run 返回错误: %v", err)
+	}
+}
+
+// 两轮 TTS：注入的播放器收到的是 Ogg Opus 字节流——魔数、前两页
+// OpusHead/OpusTags、granuleposition 48kHz 基准每包 +2880、tts stop 收尾、
+// 下一轮重发起播（头页重发、serial 更换、granule 重置）。
+func TestSessionTTSRoundsRestartPlayerStream(t *testing.T) {
+	fs := newFakeServer(t)
+	stdinR, stdin := scriptStdin(t)
+	player := &fakePlayer{}
+	sess := newTestSession(t, fs, &lockedBuffer{}, nil, player, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	if _, err := io.WriteString(stdin, "小智，讲个故事\n"); err != nil {
+		t.Fatalf("写入脚本输入失败: %v", err)
+	}
+	fs.nextReceived(t)                                      // hello
+	wantDetect(t, fs.nextReceived(t), "你好小智", fs.sessionID) // 唤醒上报
+	wantDetect(t, fs.nextReceived(t), "讲个故事", fs.sessionID) // 查询
+
+	// 第一轮：2 个 opus 包。
+	fs.send(t, map[string]any{"type": "tts", "state": "start"})
+	fs.sendBinary(t, []byte{0x11})
+	fs.sendBinary(t, []byte{0x22})
+	fs.send(t, map[string]any{"type": "tts", "state": "stop"})
+	// 第二轮：1 个 opus 包。
+	fs.send(t, map[string]any{"type": "tts", "state": "start"})
+	fs.sendBinary(t, []byte{0x33})
+	fs.send(t, map[string]any{"type": "tts", "state": "stop"})
+
+	eventually(t, func() bool {
+		_, finishes, _ := player.snapshot()
+		return finishes == 2
+	})
+
+	frames, finishes, stops := player.snapshot()
+	var stream bytes.Buffer
+	for _, f := range frames {
+		stream.Write(f)
+	}
+	pages := parseOggPages(t, stream.Bytes())
+	if len(pages) != 9 { // 轮 1：头 2 页+音频 2 页+EOS；轮 2：头 2 页+音频 1 页+EOS
+		t.Fatalf("两轮应共 9 页, 实际 %d", len(pages))
+	}
+	for i, idx := range []int{0, 5} {
+		pg := pages[idx]
+		if string(pg.magic) != "OggS" {
+			t.Errorf("第 %d 轮首帧魔数 = %q, 期望 OggS", i+1, pg.magic)
+		}
+		if !bytes.HasPrefix(pg.payload, []byte("OpusHead")) {
+			t.Errorf("第 %d 轮首页应为 OpusHead, 实际 %q", i+1, pg.payload[:8])
+		}
+		if !bytes.HasPrefix(pages[idx+1].payload, []byte("OpusTags")) {
+			t.Errorf("第 %d 轮第二页应为 OpusTags, 实际 %q", i+1, pages[idx+1].payload[:8])
+		}
+		if pg.seq != 0 {
+			t.Errorf("第 %d 轮头页 seq = %d, 期望每轮从 0 重计", i+1, pg.seq)
+		}
+	}
+	// tts stop 收尾：每轮末尾一页空 EOS（RFC 3533 §6.2）。
+	for i, eos := range []int{4, 8} {
+		if pages[eos].headerType&0x04 == 0 {
+			t.Errorf("第 %d 轮 tts stop 后应输出 EOS 收尾页", i+1)
+		}
+	}
+	// granuleposition：轮 1 递增 2880/包（EOS 停在末值），轮 2 重置后再递增。
+	for i, want := range []uint64{2880, 5760, 5760, 2880, 2880} {
+		at := []int{2, 3, 4, 7, 8}[i]
+		if pages[at].granule != want {
+			t.Errorf("页 %d granule = %d, 期望 %d", at, pages[at].granule, want)
+		}
+	}
+	if pages[0].serial == pages[5].serial {
+		t.Error("两轮流 serial 相同, 期望每轮随机区分")
+	}
+	if !bytes.Equal(pages[2].payload, []byte{0x11}) || !bytes.Equal(pages[3].payload, []byte{0x22}) || !bytes.Equal(pages[7].payload, []byte{0x33}) {
+		t.Error("音频页载荷与 server 下发的包不一致")
+	}
+	if finishes != 2 || stops != 0 {
+		t.Errorf("Finish = %d（期望 2）, Stop = %d（期望 0，打断专用）", finishes, stops)
 	}
 
 	if _, err := io.WriteString(stdin, "exit\n"); err != nil {
