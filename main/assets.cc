@@ -280,6 +280,12 @@ bool Assets::LvglStrategy::Apply(Assets* assets, bool refresh_display_theme) {
 
     Assets::LoadSrmodelsFromIndex(assets, root.get());
 
+    // 无屏板（NoDisplay）不走显示驱动，lv_init() 从未执行，后面构造
+    // 字体/表情资源会踩未初始化的 LVGL 内置分配器（空指针崩溃），这里兜底
+    if (!lv_is_initialized()) {
+        lv_init();
+    }
+
     auto& theme_manager = LvglThemeManager::GetInstance();
     auto light_theme = theme_manager.GetTheme("light");
     auto dark_theme = theme_manager.GetTheme("dark");
