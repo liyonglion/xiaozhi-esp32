@@ -1,6 +1,7 @@
 package sim
 
 import (
+	"bytes"
 	"io"
 	"strings"
 	"testing"
@@ -331,9 +332,20 @@ func TestSessionMCPDoesNotBlockDialogue(t *testing.T) {
 			strings.Contains(got, "字幕: 现在是三点") &&
 			strings.Count(got, "待唤醒> \n") >= 2
 	})
-	frames, _ := player.snapshot()
-	if len(frames) != 1 || string(frames[0]) != string(opusFrame) {
-		t.Errorf("MCP 期间 opus 帧应照常到达播放器, 实际: %v", frames)
+	frames, _, _ := player.snapshot()
+	var oggBytes bytes.Buffer
+	for _, f := range frames {
+		oggBytes.Write(f)
+	}
+	pages := parseOggPages(t, oggBytes.Bytes())
+	var gotPacket bool
+	for _, pg := range pages {
+		if bytes.Equal(pg.payload, opusFrame) {
+			gotPacket = true
+		}
+	}
+	if !gotPacket {
+		t.Errorf("MCP 期间 opus 帧应照常以 Ogg 页到达播放器, 实际 %d 页", len(pages))
 	}
 
 	if _, err := io.WriteString(stdin, "exit\n"); err != nil {

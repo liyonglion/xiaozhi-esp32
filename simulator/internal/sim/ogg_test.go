@@ -186,6 +186,27 @@ func TestOggStreamLargePacketLacing(t *testing.T) {
 	}
 }
 
+// 长度恰为 255 倍数的包必须补一个 0 终止 lacing 值（RFC 3533 §3.2.1：
+// 包的最后一个 lacing 值必须 <255，否则下一包会被并入本包）。
+func TestOggStreamPacketMultipleOf255GetsTerminatingLacing(t *testing.T) {
+	for _, size := range []int{255, 510} {
+		var sink bytes.Buffer
+		stream := newOggOpusStream(&sink)
+		stream.writePacket(bytes.Repeat([]byte{0x7E}, size))
+		stream.writePacket([]byte{0x01})
+		pages := parseOggPages(t, sink.Bytes())
+		audio := pages[2]
+		want := bytes.Repeat([]byte{255}, size/255)
+		want = append(want, 0)
+		if !bytes.Equal(audio.lacing, want) {
+			t.Errorf("%d 字节包 lacing = %v, 期望 %v（补 0 终止）", size, audio.lacing, want)
+		}
+		if audio.segments != len(want) || audio.segments > 255 {
+			t.Errorf("%d 字节包 segments = %d, 期望 %d 且 ≤255", size, audio.segments, len(want))
+		}
+	}
+}
+
 // CRC 用独立实现的参考向量验证（python3 逐位 MSB-first 0x04c11db7）。
 func TestOggCRCReferenceVectors(t *testing.T) {
 	cases := []struct {

@@ -54,6 +54,7 @@ func (p *ffplayPlayer) start() {
 		return
 	}
 	if err := cmd.Start(); err != nil {
+		_ = stdin.Close() // 启动失败也要释放管道写端
 		p.degrade("启动 ffplay 失败（%s）: %v", bin, err)
 		return
 	}
@@ -71,35 +72,49 @@ func (p *ffplayPlayer) degrade(format string, args ...any) {
 }
 
 // Play 写入一段 Ogg 字节：首次调用起播 ffplay。
+// 写 stdin 不持锁：ffplay 卡死导致管道写满时，Stop（kill）仍能立即进行，
+// 被阻塞的写随后以 EPIPE 返回。
 func (p *ffplayPlayer) Play(b []byte) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.broken {
+		p.mu.Unlock()
 		return
 	}
 	if p.cmd == nil {
 		p.start()
 		if p.broken {
+			p.mu.Unlock()
 			return
 		}
 	}
-	if _, err := p.stdin.Write(b); err != nil {
-		p.degrade("写入 ffplay 失败（进程可能已退出）: %v", err)
-		p.teardown()
+	stdin := p.stdin
+	p.mu.Unlock()
+
+	if _, err := stdin.Write(b); err != nil {
+		p.mu.Lock()
+		// 仅当仍是同一进程时按故障处理；Stop/Finish 已换掉进程的 EPIPE 属预期。
+		if p.stdin == stdin && !p.broken {
+			p.degrade("写入 ffplay 失败（进程可能已退出）: %v", err)
+			p.teardown()
+		}
+		p.mu.Unlock()
 	}
 }
 
 // Finish 一轮 TTS 结束：关 stdin 让 ffplay 播完余量自行退出，异步回收进程。
+// 无看门狗：ffplay 若无视 stdin EOF，进程由会话退出时的 Stop 兜底
+// （ponytail: 调试工具，真正挂死再加超时强杀）。Wait 的退出码不区分成功失败。
 func (p *ffplayPlayer) Finish() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.cmd == nil {
+		p.mu.Unlock()
 		return
 	}
 	// 关闭错误（进程已死时的 EPIPE）不影响收尾语义，静默。
 	_ = p.stdin.Close()
 	cmd := p.cmd
 	p.cmd, p.stdin = nil, nil
+	p.mu.Unlock()
 	go func() { _ = cmd.Wait() }() // 等待播完可能阻塞数百毫秒，不卡读循环
 }
 
@@ -140,21 +155,27 @@ func newOggPlayer(sink Player) *oggPlayer {
 }
 
 // Play 封装一个裸 opus 包并转发给 sink。
+// 写 sink 在锁外：sink 阻塞（管道满）时 Stop 不被 Play 拖住。
 func (p *oggPlayer) Play(frame []byte) {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	if p.enc == nil {
 		p.enc = newOggOpusStream(playerWriter{sink: p.sink})
 	}
+	enc := p.enc
+	p.mu.Unlock()
 	// 封装是纯内存操作，出错只可能来自 sink；sink 侧自会处理。
-	_ = p.enc.writePacket(frame)
+	_ = enc.writePacket(frame)
 }
 
-// Finish 结束当前流：sink 收尾后重置封装器，下轮重发头页。
+// Finish 结束当前流：先补空 EOS 页收尾，再让 sink 收尾，下轮重发头页。
 func (p *oggPlayer) Finish() {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	enc := p.enc
 	p.enc = nil
+	p.mu.Unlock()
+	if enc != nil {
+		_ = enc.finishStream()
+	}
 	p.sink.Finish()
 }
 

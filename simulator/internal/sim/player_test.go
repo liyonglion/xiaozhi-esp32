@@ -74,8 +74,8 @@ func TestFFplayPlayerFinishClosesStdinAndReaps(t *testing.T) {
 		t.Fatalf("读取子进程落盘音频失败: %v", err)
 	}
 	pages := parseOggPages(t, b)
-	if len(pages) != 4 {
-		t.Fatalf("2 个包应产生 4 页（头 2 页 + 音频 2 页）, 实际 %d", len(pages))
+	if len(pages) != 5 { // 头 2 页 + 音频 2 页 + Finish 的 EOS 页
+		t.Fatalf("2 个包应产生 5 页（头 2 + 音频 2 + EOS）, 实际 %d", len(pages))
 	}
 	if !bytes.HasPrefix(pages[0].payload, []byte("OpusHead")) || !bytes.HasPrefix(pages[1].payload, []byte("OpusTags")) {
 		t.Errorf("前两页应为 OpusHead/OpusTags, 实际 %q / %q", pages[0].payload[:8], pages[1].payload[:8])
@@ -93,16 +93,16 @@ func TestFFplayPlayerFinishClosesStdinAndReaps(t *testing.T) {
 		if err != nil {
 			t.Fatalf("重读音频失败: %v", err)
 		}
-		if pages2 = parseOggPagesQuiet(b2); len(pages2) == 7 {
+		if pages2 = parseOggPagesQuiet(b2); len(pages2) == 8 {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("下一轮应重发头页再出音频页（共 7 页）, 实际 %d", len(pages2))
+			t.Fatalf("下一轮应重发头页再出音频页（共 8 页）, 实际 %d", len(pages2))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if !bytes.HasPrefix(pages2[4].payload, []byte("OpusHead")) {
-		t.Errorf("第二轮第一页应为 OpusHead, 实际 %q", pages2[4].payload[:8])
+	if !bytes.HasPrefix(pages2[5].payload, []byte("OpusHead")) {
+		t.Errorf("第二轮第一页应为 OpusHead, 实际 %q", pages2[5].payload[:8])
 	}
 	p.Stop() // 清理
 }
@@ -142,6 +142,41 @@ func TestFFplayPlayerStopKillsPromptly(t *testing.T) {
 	}
 }
 
+// TestFFplayPlayerStopPreemptsBlockedPlay：Play 阻塞在写满的管道上时，
+// Stop 必须仍能立即返回（kill 而非排队等锁）——打断（#6）的契约。
+func TestFFplayPlayerStopPreemptsBlockedPlay(t *testing.T) {
+	dir := t.TempDir()
+	audioPath := filepath.Join(dir, "audio.ogg")
+	p := newFFplayPlayer(&bytes.Buffer{},
+		func(string) (string, error) { return "/usr/bin/true", nil },
+		func(bin string) *exec.Cmd {
+			// sleep 30：子进程从不读 stdin，管道写满后 Play 会阻塞。
+			return exec.Command("sh", "-c", `sleep 30; cat > "$1"`, "sh", audioPath)
+		})
+
+	playDone := make(chan struct{})
+	go func() {
+		defer close(playDone)
+		p.Play(bytes.Repeat([]byte{0x55}, 256*1024)) // 远超 64KB 管道容量
+	}()
+	// 给 Play 时间进入阻塞写（起进程 + 写满管道）。
+	time.Sleep(200 * time.Millisecond)
+
+	stopDone := make(chan struct{})
+	go func() { p.Stop(); close(stopDone) }()
+	select {
+	case <-stopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Play 阻塞在管道写时 Stop 未在 2 秒内返回：Stop 不应排在被阻塞的 Play 之后")
+	}
+	// kill 后阻塞的 Write 以 EPIPE 返回，Play 也必须退出（不重试、不死等）。
+	select {
+	case <-playDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop kill 后被阻塞的 Play 未返回")
+	}
+}
+
 // TestOggPlayerReissuesHeadersPerRound：oggPlayer 每轮重发头页、换 serial，
 // Finish/Stop 后下一包从新流开始。
 func TestOggPlayerReissuesHeadersPerRound(t *testing.T) {
@@ -159,10 +194,10 @@ func TestOggPlayerReissuesHeadersPerRound(t *testing.T) {
 		all.Write(f)
 	}
 	pages := parseOggPages(t, all.Bytes())
-	if len(pages) != 7 { // 轮 1：头 2 页+音频 2 页；轮 2：头 2 页+音频 1 页
-		t.Fatalf("两轮共应 7 页, 实际 %d", len(pages))
+	if len(pages) != 8 { // 轮 1：头 2 页+音频 2 页+EOS；轮 2：头 2 页+音频 1 页
+		t.Fatalf("两轮共应 8 页, 实际 %d", len(pages))
 	}
-	for i, p := range []int{0, 4} {
+	for i, p := range []int{0, 5} {
 		if !bytes.HasPrefix(pages[p].payload, []byte("OpusHead")) {
 			t.Errorf("第 %d 轮首个载荷应为 OpusHead, 实际 %q", i+1, pages[p].payload[:8])
 		}
@@ -170,10 +205,17 @@ func TestOggPlayerReissuesHeadersPerRound(t *testing.T) {
 			t.Errorf("第 %d 轮头页 seq = %d, 期望从 0 重新计数", i+1, pages[p].seq)
 		}
 	}
-	if pages[0].serial == pages[4].serial {
+	// Finish 以空 EOS 页收尾该轮（RFC 3533 §6.2），granule 停在最后一个完成的包。
+	if pages[4].headerType&0x04 == 0 {
+		t.Error("Finish 后应输出带 EOS 标志的收尾页")
+	}
+	if len(pages[4].payload) != 0 || pages[4].granule != 5760 {
+		t.Errorf("EOS 页应为空且 granule=5760, 实际 %d 字节 granule=%d", len(pages[4].payload), pages[4].granule)
+	}
+	if pages[0].serial == pages[5].serial {
 		t.Error("两轮流 serial 相同, 期望每轮随机区分")
 	}
-	if pages[3].granule != 5760 || pages[6].granule != 2880 {
-		t.Errorf("granule 每轮应重置递增: 轮1末页 %d, 轮2首包 %d", pages[3].granule, pages[6].granule)
+	if pages[3].granule != 5760 || pages[7].granule != 2880 {
+		t.Errorf("granule 每轮应重置递增: 轮1末页 %d, 轮2首包 %d", pages[3].granule, pages[7].granule)
 	}
 }

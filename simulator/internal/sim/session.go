@@ -220,7 +220,7 @@ func (s *Session) handleInput(line string) {
 		s.setState(StateListening)
 		return
 	}
-	if s.state == StateIdle {
+	if s.stateNow() == StateIdle {
 		s.printf("（提示）未检测到唤醒词：请以「小智」或「你好小智」开头；输入 exit 退出\n")
 		return
 	}
@@ -300,6 +300,13 @@ func (s *Session) setState(next State) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.state = next
+}
+
+// stateNow 加锁读状态：REPL goroutine 与 readLoop 的 setState 并发访问。
+func (s *Session) stateNow() State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.state
 }
 
 // sendDetect 发送 listen detect 消息（唤醒上报与查询共用），回填 session_id。

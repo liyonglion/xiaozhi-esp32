@@ -585,10 +585,10 @@ func TestSessionTTSRoundsRestartPlayerStream(t *testing.T) {
 		stream.Write(f)
 	}
 	pages := parseOggPages(t, stream.Bytes())
-	if len(pages) != 7 { // 轮 1：头 2 页+音频 2 页；轮 2：头 2 页+音频 1 页
-		t.Fatalf("两轮应共 7 页, 实际 %d", len(pages))
+	if len(pages) != 9 { // 轮 1：头 2 页+音频 2 页+EOS；轮 2：头 2 页+音频 1 页+EOS
+		t.Fatalf("两轮应共 9 页, 实际 %d", len(pages))
 	}
-	for i, idx := range []int{0, 4} {
+	for i, idx := range []int{0, 5} {
 		pg := pages[idx]
 		if string(pg.magic) != "OggS" {
 			t.Errorf("第 %d 轮首帧魔数 = %q, 期望 OggS", i+1, pg.magic)
@@ -603,17 +603,23 @@ func TestSessionTTSRoundsRestartPlayerStream(t *testing.T) {
 			t.Errorf("第 %d 轮头页 seq = %d, 期望每轮从 0 重计", i+1, pg.seq)
 		}
 	}
-	// granuleposition：轮 1 递增 2880/包，轮 2 重置后再递增。
-	for i, want := range []uint64{2880, 5760, 2880} {
-		audio := []int{2, 3, 6}[i]
-		if pages[audio].granule != want {
-			t.Errorf("音频页 %d granule = %d, 期望 %d", audio, pages[audio].granule, want)
+	// tts stop 收尾：每轮末尾一页空 EOS（RFC 3533 §6.2）。
+	for i, eos := range []int{4, 8} {
+		if pages[eos].headerType&0x04 == 0 {
+			t.Errorf("第 %d 轮 tts stop 后应输出 EOS 收尾页", i+1)
 		}
 	}
-	if pages[0].serial == pages[4].serial {
+	// granuleposition：轮 1 递增 2880/包（EOS 停在末值），轮 2 重置后再递增。
+	for i, want := range []uint64{2880, 5760, 5760, 2880, 2880} {
+		at := []int{2, 3, 4, 7, 8}[i]
+		if pages[at].granule != want {
+			t.Errorf("页 %d granule = %d, 期望 %d", at, pages[at].granule, want)
+		}
+	}
+	if pages[0].serial == pages[5].serial {
 		t.Error("两轮流 serial 相同, 期望每轮随机区分")
 	}
-	if !bytes.Equal(pages[2].payload, []byte{0x11}) || !bytes.Equal(pages[3].payload, []byte{0x22}) || !bytes.Equal(pages[6].payload, []byte{0x33}) {
+	if !bytes.Equal(pages[2].payload, []byte{0x11}) || !bytes.Equal(pages[3].payload, []byte{0x22}) || !bytes.Equal(pages[7].payload, []byte{0x33}) {
 		t.Error("音频页载荷与 server 下发的包不一致")
 	}
 	if finishes != 2 || stops != 0 {

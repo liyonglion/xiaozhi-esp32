@@ -73,11 +73,17 @@ func (o *oggOpusStream) writeHeadPages() error {
 	return o.writePage(0, 0, tags)
 }
 
+// finishStream 输出空 EOS 页收尾当前流（granule 停在最后一个完成的包）。
+func (o *oggOpusStream) finishStream() error {
+	return o.writePage(0x04, o.granule, nil)
+}
+
 // writePage 按页头+段表+载荷组装一页并计算 CRC（RFC 3533 §3/§4）。
+// 长度恰为 255 倍数的包补一个 0 终止 lacing 值（§3.2.1：末段必须 <255）。
 func (o *oggOpusStream) writePage(headerType byte, granule uint64, payload []byte) error {
 	nSeg := (len(payload) + 254) / 255
-	if nSeg == 0 {
-		nSeg = 1
+	if len(payload) > 0 && len(payload)%255 == 0 {
+		nSeg++
 	}
 	page := make([]byte, 0, 27+nSeg+len(payload))
 	page = append(page, "OggS"...)
@@ -92,9 +98,9 @@ func (o *oggOpusStream) writePage(headerType byte, granule uint64, payload []byt
 	page = append(page, 0, 0, 0, 0) // CRC 占位，最后回填
 	page = append(page, byte(nSeg))
 	for i := 0; i < nSeg; i++ {
-		seg := 255
-		if rem := len(payload) - i*255; rem < 255 {
-			seg = rem
+		seg := len(payload) - i*255 // 终止段时为 0
+		if seg > 255 {
+			seg = 255
 		}
 		page = append(page, byte(seg))
 	}
