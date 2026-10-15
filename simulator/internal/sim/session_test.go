@@ -2,6 +2,7 @@ package sim
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,17 +61,20 @@ func (p *fakePlayer) snapshot() (frames [][]byte, stops int) {
 }
 
 // fakeServer 进程内假 server：应答 hello、记录收到的文本帧与二进制帧。
+// 支持多次连接（重连测试）：每次升级记录请求 URL，hello 应答按连接序号下发不同 session_id。
 type fakeServer struct {
 	t         *testing.T
 	srv       *httptest.Server
 	wsURL     string
 	sessionID string
 
-	mu       sync.Mutex
-	query    url.Values
-	header   http.Header
-	conn     *websocket.Conn
-	received chan map[string]any
+	mu        sync.Mutex
+	query     url.Values
+	header    http.Header
+	conn      *websocket.Conn
+	connCount int      // 已完成的 WebSocket 升级次数
+	dialURLs  []string // 每次连接请求的完整 URL（含查询参数）
+	received  chan map[string]any
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -85,6 +89,9 @@ func newFakeServer(t *testing.T) *fakeServer {
 		fs.mu.Lock()
 		fs.query = r.URL.Query()
 		fs.header = r.Header
+		fs.connCount++
+		seq := fs.connCount
+		fs.dialURLs = append(fs.dialURLs, r.URL.String())
 		fs.mu.Unlock()
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -113,7 +120,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 					"version":      1,
 					"transport":    "websocket",
 					"audio_params": map[string]any{"format": "opus", "sample_rate": 24000, "channels": 1, "frame_duration": 60},
-					"session_id":   fs.sessionID,
+					"session_id":   fs.sessionIDForConn(seq),
 				}
 				writeJSON(t, conn, resp)
 			}
@@ -127,6 +134,45 @@ func newFakeServer(t *testing.T) *fakeServer {
 	t.Cleanup(fs.srv.Close)
 	fs.wsURL = "ws" + strings.TrimPrefix(fs.srv.URL, "http")
 	return fs
+}
+
+// sessionIDForConn 第 n 次连接的 hello 应答 session_id：首连接沿用固定值，后续加序号后缀，
+// 使重连测试能断言 session_id 换新。
+func (fs *fakeServer) sessionIDForConn(n int) string {
+	if n <= 1 {
+		return fs.sessionID
+	}
+	return fmt.Sprintf("%s-%d", fs.sessionID, n)
+}
+
+// closeCurrentConn 从 server 侧主动断开当前连接（模拟 120s 无活动后的 close）。
+func (fs *fakeServer) closeCurrentConn(t *testing.T) {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if fs.conn == nil {
+		t.Fatal("假 server 尚无活动连接")
+	}
+	fs.conn.Close() // 连接处理协程的 ReadMessage 随之出错返回
+}
+
+// dialCount 返回已记录的连接请求次数。
+func (fs *fakeServer) dialCount(t *testing.T) int {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	return len(fs.dialURLs)
+}
+
+// dialURL 返回第 i 次（0 起）连接请求的完整 URL。
+func (fs *fakeServer) dialURL(t *testing.T, i int) string {
+	t.Helper()
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	if i >= len(fs.dialURLs) {
+		t.Fatalf("假 server 尚未收到第 %d 个连接请求（已收 %d 个）", i+1, len(fs.dialURLs))
+	}
+	return fs.dialURLs[i]
 }
 
 // writeJSON 用 Marshal+WriteMessage 下发，模拟真实 server 的线上格式
