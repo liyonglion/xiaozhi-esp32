@@ -8,9 +8,11 @@ import (
 )
 
 // ffplayArgs 低缓冲实时播放参数：-nodisp 无窗口、-autoexit 播完退出、
-// -fflags nobuf -probesize 32 最小化探测缓冲、-loglevel quiet 静音日志、
+// -probesize 32 最小化探测缓冲（ogg 魔数足够）、-loglevel quiet 静音日志、
 // 末尾 - 表示从 stdin 读。
-var ffplayArgs = []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-fflags", "nobuf", "-probesize", "32", "-"}
+// 注意：不要加 -fflags nobuf——ffmpeg 7.x 会因 "nobuf" 解析失败直接退出，
+// 表现为播放首包即 broken pipe。
+var ffplayArgs = []string{"-nodisp", "-autoexit", "-loglevel", "quiet", "-probesize", "32", "-"}
 
 // ffplayPlayer 把 Ogg 字节流喂给 ffplay 子进程 stdin 实时播放。
 // 封装由上游 oggPlayer 完成——本类型只管进程生命周期。
