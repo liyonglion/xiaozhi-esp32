@@ -72,8 +72,14 @@ type Session struct {
 	aborting  bool // 打断待确认：丢弃在途旧轮音频，tts stop 确认或新 tts start 清除
 
 	writeMu sync.Mutex // 串行化 WS 写：REPL 与 readLoop（MCP 应答）都可能发帧
-	conn    *websocket.Conn
-	wg      sync.WaitGroup
+	// reconnectMu 串行化重连（检查 connDead + connect 整段）：REPL 唤醒与
+	// 闹钟到点（fireAlarm）都可能触发重连，不串行化会双重连——孤儿连接的
+	// readLoop 永远阻塞在 ReadMessage，wg.Wait() 挂死 Run 退出。
+	reconnectMu sync.Mutex
+	conn        *websocket.Conn
+	wg          sync.WaitGroup
+
+	alarms *alarmEngine // 闹钟/定时器（到点响铃 + 代发查询，见 alarm.go）
 }
 
 // NewSession 构造会话。verbose 为 nil 时关闭原始帧日志；
@@ -83,7 +89,8 @@ func NewSession(cfg Config, in io.Reader, out io.Writer, verbose io.Writer, play
 	if player == nil {
 		player = newFFplayPlayer(out, nil, nil)
 	}
-	return &Session{cfg: cfg, in: in, out: out, verbose: verbose, player: newOggPlayer(player)}
+	return &Session{cfg: cfg, in: in, out: out, verbose: verbose, player: newOggPlayer(player),
+		alarms: newAlarmEngine()}
 }
 
 // Run 建立连接、完成 hello 握手并进入 REPL，直到 exit/quit 或 stdin EOF。
@@ -95,6 +102,8 @@ func (s *Session) Run() error {
 	}
 	s.wg.Add(1)
 	go s.readLoop(conn)
+	s.wg.Add(1)
+	go s.alarmLoop() // 每秒闹钟检查（对齐固件 CLOCK_TICK）
 
 	err = s.repl()
 
@@ -229,6 +238,9 @@ func (s *Session) repl() error {
 			switch {
 			case line == "exit" || line == "quit":
 				return nil
+			case s.alarms.stopRingingIfAny():
+				// 响铃中任意输入行（含超长行，先于长度分支）停铃，该行被消费
+				s.printf("（已停止响铃）\n")
 			case len(line) > maxInputBytes:
 				s.printf("（提示）输入行超过 %d KiB 上限，已忽略——请拆分后再发\n", maxInputBytes>>10)
 			default:
@@ -242,7 +254,7 @@ func (s *Session) repl() error {
 	}
 }
 
-// handleInput 按当前状态处理一行输入。
+// handleInput 按当前状态处理一行输入（响铃行已在 repl 优先拦截停铃）。
 // 播放态的任意输入行（无论是否带唤醒词）都走打断路径：旧 Ogg 流未停时，
 // 新旧两轮音频会挤进同一播放器。无唤醒词则只 abort + 查询，不发唤醒上报。
 func (s *Session) handleInput(line string) {
@@ -300,7 +312,11 @@ func (s *Session) sendAbort() error {
 
 // ensureConnected 在连接已断时用缓存的 url/token 重连并完整重走 hello 握手
 // （OTA 结果仅启动时获取一次，此处不重跑）；连接健康时直接返回。
+// 持 reconnectMu 横跨检查与 connect：REPL 与 fireAlarm 两个入口并发到达时
+// 只允许一次重连，后到者在门内重新检查即直接返回。
 func (s *Session) ensureConnected() error {
+	s.reconnectMu.Lock()
+	defer s.reconnectMu.Unlock()
 	s.mu.Lock()
 	dead := s.connDead
 	s.mu.Unlock()
@@ -469,8 +485,11 @@ func (s *Session) sendDetect(text string) error {
 var writeTimeout = 10 * time.Second
 
 // sendJSON 序列化并写文本帧；握手后的所有消息回填 session_id。
+// conn 在 s.mu 下快照：fireAlarm 的重连可能并发替换 s.conn，裸读是数据竞争
+// （写旧连接只会得到发送错误，走既有失败路径，无害）。
 func (s *Session) sendJSON(msg map[string]any) error {
 	s.mu.Lock()
+	conn := s.conn
 	if s.sessionID != "" {
 		msg["session_id"] = s.sessionID
 	}
@@ -480,8 +499,8 @@ func (s *Session) sendJSON(msg map[string]any) error {
 		return fmt.Errorf("序列化 %v 消息失败: %w", msg["type"], err)
 	}
 	s.writeMu.Lock()
-	_ = s.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	err = s.conn.WriteMessage(websocket.TextMessage, data)
+	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	err = conn.WriteMessage(websocket.TextMessage, data)
 	s.writeMu.Unlock()
 	if err != nil {
 		return fmt.Errorf("发送 %v 消息失败: %w", msg["type"], err)

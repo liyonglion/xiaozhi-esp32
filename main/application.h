@@ -16,6 +16,7 @@
 
 #include "protocol.h"
 #include "ota.h"
+#include "alarm_manager.h"
 #include "audio_service.h"
 #include "device_state.h"
 #include "device_state_machine.h"
@@ -186,6 +187,12 @@ private:
     
     // State change handler called by state machine
     void OnStateChanged(DeviceState old_state, DeviceState new_state);
+
+    // 闹钟/定时器：主循环 CLOCK_TICK 每秒驱动一次（到点检查、响铃节奏、超时）
+    void AlarmTick();
+    void FireAlarm(AlarmManager::Alarm alarm);
+    // 代发查询让服务器 TTS 播报留言；通道未开时仅从 Idle 借道开通道
+    void AlarmInvokeQuery(const std::string& text);
 };
 
 

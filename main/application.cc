@@ -1,4 +1,5 @@
 #include "application.h"
+#include "alarm_manager.h"
 #include "assets.h"
 #include "assets/lang_config.h"
 #include "audio_codec.h"
@@ -273,6 +274,7 @@ void Application::Run() {
 
         if (bits & MAIN_EVENT_CLOCK_TICK) {
             clock_ticks_++;
+            AlarmTick();  // 闹钟/定时器到点检查与响铃节奏（主线程，与 MCP 工具同线程）
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
 
@@ -778,6 +780,7 @@ void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
 
 void Application::HandleToggleChatEvent() {
+    AlarmManager::GetInstance().StopRing();  // 按键停铃（任意交互键即停，Q3）
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -842,6 +845,7 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
 }
 
 void Application::HandleStartListeningEvent() {
+    AlarmManager::GetInstance().StopRing();  // 按键停铃
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -878,6 +882,7 @@ void Application::HandleStartListeningEvent() {
 }
 
 void Application::HandleStopListeningEvent() {
+    AlarmManager::GetInstance().StopRing();  // 按键停铃
     auto state = GetDeviceState();
 
     if (state == kDeviceStateNotifying) {
@@ -898,6 +903,8 @@ void Application::HandleWakeWordDetectedEvent() {
     if (!protocol_) {
         return;
     }
+
+    AlarmManager::GetInstance().StopRing();  // 唤醒词停铃（Q3），随后照常进入唤醒流程
 
     auto state = GetDeviceState();
     auto wake_word = audio_service_.GetLastWakeWord();
@@ -1358,6 +1365,90 @@ void Application::SetAecMode(AecMode mode) {
 }
 
 void Application::PlaySound(const std::string_view& sound) { audio_service_.PlaySound(sound); }
+
+// 闹钟到点后代发的查询文本：服务器以 listen detect 文本接收，跳过 ASR 交给
+// LLM，回复经 TTS 下发（见 GLOSSARY「查询」的设备代发语义）。
+static std::string AlarmQueryText(const AlarmManager::Alarm& alarm) {
+    if (alarm.message.empty()) {
+        return "闹钟时间到了，请用一两句话叫醒我";
+    }
+    return "闹钟时间到了，请叫醒我并提醒我：" + alarm.message;
+}
+
+void Application::AlarmTick() {
+    auto& alarms = AlarmManager::GetInstance();
+    time_t now = time(NULL);
+    if (alarms.IsRinging()) {
+        // 服务器播报已接管（tts start → Speaking）：停铃转说话
+        if (GetDeviceState() == kDeviceStateSpeaking) {
+            alarms.StopRing();
+            return;
+        }
+        if (alarms.RingExpired(now)) {  // 3 分钟无人停，自动停（Q3）
+            alarms.StopRing();
+            return;
+        }
+        if (alarms.ShouldBeep(now)) {
+            PlaySound(Lang::Sounds::OGG_EXCLAMATION);
+        }
+        return;
+    }
+    auto due = alarms.PopDue(now);
+    if (due) {
+        FireAlarm(std::move(*due));
+    }
+}
+
+void Application::FireAlarm(AlarmManager::Alarm alarm) {
+    ESP_LOGI(TAG, "Alarm/timer %d fired", alarm.id);
+    std::string query = AlarmQueryText(alarm);
+
+    auto state = GetDeviceState();
+    if (state == kDeviceStateSpeaking) {
+        AbortSpeaking(kAbortReasonNone);  // 闹钟优先，打断当前播报（Q9）
+    } else if (state == kDeviceStateNotifying) {
+        StopNotification();
+    }
+
+    time_t now = time(NULL);
+    AlarmManager::GetInstance().StartRing(std::move(alarm), now);
+    PlaySound(Lang::Sounds::OGG_EXCLAMATION);
+
+    AlarmInvokeQuery(query);
+}
+
+void Application::AlarmInvokeQuery(const std::string& text) {
+    if (!protocol_) {
+        return;
+    }
+    if (protocol_->IsAudioChannelOpened()) {
+        protocol_->SendQuery(text);
+        return;
+    }
+    // 通道未开（设备空闲）：只从 Idle 借道唤醒流程开通道后发送；其他状态
+    // （连接中/升级中/激活中）放弃代发，仅保留本地响铃（Q8c：断网不哑火）。
+    if (GetDeviceState() != kDeviceStateIdle) {
+        return;
+    }
+    if (!SetDeviceState(kDeviceStateConnecting)) {
+        return;
+    }
+    Schedule([this, text]() {
+        if (GetDeviceState() != kDeviceStateConnecting || !protocol_) {
+            return;
+        }
+        auto& board = Board::GetInstance();
+        board.SetPowerSaveLevel(PowerSaveLevel::PERFORMANCE);
+        if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
+            SetDeviceState(kDeviceStateIdle);
+            return;
+        }
+        protocol_->SendQuery(text);
+        // 回 Idle 等 tts start（Idle→Speaking 合法），避免停在 Connecting 里
+        // 挡住 OnIncomingAudio 只在 Speaking 态入队的前置条件
+        SetDeviceState(kDeviceStateIdle);
+    });
+}
 
 void Application::ResetProtocol() {
     Schedule([this]() {

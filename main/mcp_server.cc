@@ -13,6 +13,7 @@
 #include <optional>
 
 #include "application.h"
+#include "alarm_manager.h"
 #include "board.h"
 #include "display.h"
 #include "lvgl_image.h"
@@ -57,6 +58,67 @@ void McpServer::AddCommonTools() {
                 auto codec = board.GetAudioCodec();
                 codec->SetOutputVolume(properties["volume"].value<int>());
                 return true;
+            });
+
+    // 闹钟/定时器（v1：一次性、不持久化；到点响铃并代发查询播报留言）
+    auto& alarms = AlarmManager::GetInstance();
+    AddTool("self.clock.set_timer",
+            "Set a one-shot countdown timer on the device. Use when the user asks for a reminder "
+            "after a duration, e.g. 'wake me up in 20 minutes' or 'remind me in half an hour'. "
+            "When it fires, the device beeps and speaks.\n"
+            "Args:\n"
+            "  `minutes`: duration in minutes from now (1-1440)\n"
+            "  `message`: optional reminder text, spoken aloud when the timer fires\n"
+            "Return: JSON receipt with the timer id and ring time (local device time). The "
+            "return value is feedback; announce the ring time briefly.",
+            PropertyList({Property("minutes", kPropertyTypeInteger, 1, 1440),
+                          Property("message", kPropertyTypeString, "").SetMaxLength(200)}),
+            [&alarms](const PropertyList& properties) -> ToolResult {
+                auto result = alarms.AddTimer(properties["minutes"].value<int>(),
+                                              properties["message"].value<std::string>());
+                if (!result) {
+                    return std::unexpected(std::move(result.error()));
+                }
+                return std::move(*result);
+            });
+
+    AddTool("self.clock.set_alarm",
+            "Set a one-shot alarm at an absolute clock time (24-hour, local device time). Use "
+            "when the user names a time of day, e.g. 'wake me up at 8:30' → time=\"08:30\". "
+            "If that time already passed today, it fires tomorrow at the same time. When it "
+            "fires, the device beeps and speaks.\n"
+            "Args:\n"
+            "  `time`: clock time in HH:MM format, e.g. \"08:30\" or \"20:00\"\n"
+            "  `message`: optional text spoken aloud when the alarm fires\n"
+            "Return: JSON receipt with the alarm id and ring date-time.",
+            PropertyList({Property("time", kPropertyTypeString),
+                          Property("message", kPropertyTypeString, "").SetMaxLength(200)}),
+            [&alarms](const PropertyList& properties) -> ToolResult {
+                auto result = alarms.AddAlarm(properties["time"].value<std::string>(),
+                                              properties["message"].value<std::string>());
+                if (!result) {
+                    return std::unexpected(std::move(result.error()));
+                }
+                return std::move(*result);
+            });
+
+    AddTool("self.clock.cancel",
+            "Cancel a pending timer or alarm by its id. Get the ids from `self.clock.list`.",
+            PropertyList({Property("id", kPropertyTypeInteger)}),
+            [&alarms](const PropertyList& properties) -> ToolResult {
+                auto result = alarms.Cancel(properties["id"].value<int>());
+                if (!result) {
+                    return std::unexpected(std::move(result.error()));
+                }
+                return std::move(*result);
+            });
+
+    AddTool("self.clock.list",
+            "List all pending timers and alarms on the device: ids, types, ring times (local "
+            "device time) and optional messages.",
+            PropertyList(),
+            [&alarms](const PropertyList& properties) -> ReturnValue {
+                return alarms.List();
             });
 
     auto backlight = board.GetBacklight();

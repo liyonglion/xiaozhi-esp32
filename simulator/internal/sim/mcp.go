@@ -3,6 +3,8 @@ package sim
 import (
 	"encoding/json"
 	"fmt"
+	"math"
+	"time"
 )
 
 // MCP over WebSocket：server 在 hello（features.mcp=true）后异步下发 JSON-RPC 请求，
@@ -48,8 +50,10 @@ func (s *Session) handleMCP(data []byte) {
 	}
 }
 
-// handleToolsCall 按工具名分发假工具调用；未知工具回 -32601。
+// handleToolsCall 按工具名分发工具调用；闹钟四件套真调度（alarm.go），其余为
+// 假数据工具；未知工具回 -32601。
 func (s *Session) handleToolsCall(req rpcRequest) {
+	now := time.Now()
 	switch req.Params.Name {
 	case "get_device_status":
 		s.sendMCPResult(req.ID, toolCallResult(map[string]any{
@@ -59,6 +63,39 @@ func (s *Session) handleToolsCall(req rpcRequest) {
 	case "set_volume":
 		volume, _ := req.Params.Arguments["volume"].(float64)
 		s.sendMCPResult(req.ID, toolCallResult(map[string]any{"success": true, "volume": int(volume)}))
+	case "set_timer":
+		minutes, _ := req.Params.Arguments["minutes"].(float64)
+		message, _ := req.Params.Arguments["message"].(string)
+		if minutes != math.Trunc(minutes) { // schema 声明 integer，LLM 违约时拒收而非截断
+			s.sendMCPResult(req.ID, toolCallError("minutes must be an integer"))
+			break
+		}
+		if receipt, err := s.alarms.addTimer(int(minutes), message, now); err != nil {
+			s.sendMCPResult(req.ID, toolCallError(err.Error()))
+		} else {
+			s.sendMCPResult(req.ID, toolCallResult(receipt))
+		}
+	case "set_alarm":
+		hhmm, _ := req.Params.Arguments["time"].(string)
+		message, _ := req.Params.Arguments["message"].(string)
+		if receipt, err := s.alarms.addAlarm(hhmm, message, now); err != nil {
+			s.sendMCPResult(req.ID, toolCallError(err.Error()))
+		} else {
+			s.sendMCPResult(req.ID, toolCallResult(receipt))
+		}
+	case "clock_cancel":
+		id, _ := req.Params.Arguments["id"].(float64)
+		if id != math.Trunc(id) {
+			s.sendMCPResult(req.ID, toolCallError("id must be an integer"))
+			break
+		}
+		if receipt, err := s.alarms.cancel(int(id)); err != nil {
+			s.sendMCPResult(req.ID, toolCallError(err.Error()))
+		} else {
+			s.sendMCPResult(req.ID, toolCallResult(receipt))
+		}
+	case "clock_list":
+		s.sendMCPResult(req.ID, toolCallResult(s.alarms.list(now)))
 	default:
 		s.sendMCPError(req.ID, -32601, "Method not found: "+req.Params.Name)
 	}
@@ -76,7 +113,18 @@ func toolCallResult(value map[string]any) map[string]any {
 	}
 }
 
-// fakeTools 暴露给 server 的两个假工具（get_device_status 假数据 / set_volume 回显成功）。
+// toolCallError 工具级失败（如非法钟点、不存在的 id）：isError:true，文本即
+// 错误说明，LLM 会据此口头告知用户（对齐固件 std::unexpected 的语义）。
+func toolCallError(text string) map[string]any {
+	return map[string]any{
+		"content": []any{map[string]any{"type": "text", "text": text}},
+		"isError": true,
+	}
+}
+
+// fakeTools 暴露给 server 的工具清单：两个假数据工具 + 闹钟四件套（真调度，
+// 字段与固件 self.clock.* 一致；cancel/list 带 clock_ 前缀，避免在 server
+// 合并的工具命名空间里与其它工具源撞名）。
 func fakeTools() []map[string]any {
 	return []map[string]any{
 		{
@@ -101,6 +149,66 @@ func fakeTools() []map[string]any {
 					},
 				},
 				"required": []any{"volume"},
+			},
+		},
+		{
+			"name":        "set_timer",
+			"description": "设置一次性倒计时定时器（如「20分钟后叫我」「半小时后提醒我喝水」），到点响铃并语音播报",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"minutes": map[string]any{
+						"type":        "integer",
+						"minimum":     1,
+						"maximum":     1440,
+						"description": "从现在起的分钟数（1-1440）",
+					},
+					"message": map[string]any{
+						"type":        "string",
+						"description": "可选留言，到点语音播报",
+					},
+				},
+				"required": []any{"minutes"},
+			},
+		},
+		{
+			"name":        "set_alarm",
+			"description": "设置一次性绝对钟点闹钟（如「8点半叫我」→ time=\"08:30\"）；今天已过则明天同时刻，到点响铃并语音播报",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"time": map[string]any{
+						"type":        "string",
+						"description": "24 小时制钟点 HH:MM，如 \"08:30\"、\"20:00\"",
+					},
+					"message": map[string]any{
+						"type":        "string",
+						"description": "可选留言，到点语音播报",
+					},
+				},
+				"required": []any{"time"},
+			},
+		},
+		{
+			"name":        "clock_cancel",
+			"description": "按 id 取消定时器/闹钟；id 用 clock_list 查询",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"id": map[string]any{
+						"type":        "integer",
+						"description": "clock_list 返回的编号",
+					},
+				},
+				"required": []any{"id"},
+			},
+		},
+		{
+			"name":        "clock_list",
+			"description": "列出全部待触发的定时器/闹钟（编号、类型、触发时间、留言）",
+			"inputSchema": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
 			},
 		},
 	}

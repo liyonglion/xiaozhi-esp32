@@ -79,6 +79,35 @@ void Protocol::SendWakeWordDetected(const std::string& wake_word) {
     SendText(json);
 }
 
+// 留言可能带引号/反斜杠/换行，手工拼 JSON 前先转义；其余控制字符直接丢弃
+// （不会出现在正常语音留言里）。
+static std::string JsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) >= 0x20) {
+                    out += c;
+                }
+                break;
+        }
+    }
+    return out;
+}
+
+void Protocol::SendQuery(const std::string& text) {
+    std::string json = "{\"session_id\":\"" + session_id_ +
+                       "\",\"type\":\"listen\",\"state\":\"detect\",\"text\":\"" +
+                       JsonEscape(text) + "\"}";
+    SendText(json);
+}
+
 void Protocol::SendStartListening(ListeningMode mode) {
     std::string message = "{\"session_id\":\"" + session_id_ + "\"";
     message += ",\"type\":\"listen\",\"state\":\"start\"";

@@ -84,8 +84,8 @@ func TestSessionMCPInitialize(t *testing.T) {
 	}
 }
 
-// tools/list（可带 cursor 分页参数）：应答 result.tools = 两个假工具，
-// 各带 name/description/inputSchema（JSON Schema）。
+// tools/list（可带 cursor 分页参数）：应答 result.tools = 六个工具（两个假数据
+// 工具 + 闹钟四件套），各带 name/description/inputSchema（JSON Schema）。
 func TestSessionMCPToolsList(t *testing.T) {
 	fs := newFakeServer(t)
 	stdinR, stdin := scriptStdin(t)
@@ -99,8 +99,12 @@ func TestSessionMCPToolsList(t *testing.T) {
 	payload := wantMCPReply(t, fs.nextReceived(t), 2, fs.sessionID)
 	result := wantMCPResult(t, payload)
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 2 {
-		t.Fatalf("tools/list 应答应有 2 个工具, 实际 %d: %v", len(tools), result)
+	if len(tools) != 6 {
+		t.Fatalf("tools/list 应答应有 6 个工具, 实际 %d: %v", len(tools), result)
+	}
+	wantNames := map[string]bool{
+		"get_device_status": false, "set_volume": false,
+		"set_timer": false, "set_alarm": false, "clock_cancel": false, "clock_list": false,
 	}
 	for _, raw := range tools {
 		tool, _ := raw.(map[string]any)
@@ -119,10 +123,17 @@ func TestSessionMCPToolsList(t *testing.T) {
 		if st, _ := schema["type"].(string); st != "object" {
 			t.Errorf("工具 %s inputSchema.type = %q, 期望 object", name, st)
 		}
-		switch name {
-		case "get_device_status", "set_volume":
-		default:
-			t.Errorf("意外工具名 %q, 期望 get_device_status / set_volume", name)
+		seen, known := wantNames[name]
+		if !known {
+			t.Errorf("意外工具名 %q", name)
+		} else if seen {
+			t.Errorf("工具名 %q 重复出现", name)
+		}
+		wantNames[name] = true
+	}
+	for name, seen := range wantNames {
+		if !seen {
+			t.Errorf("工具 %s 未出现在 tools/list 应答中", name)
 		}
 	}
 	// set_volume 的 volume 参数应声明 0-100 整数边界。

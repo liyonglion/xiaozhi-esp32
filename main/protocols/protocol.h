@@ -62,6 +62,9 @@ public:
     virtual bool IsAudioChannelOpened() const = 0;
     virtual bool SendAudio(std::unique_ptr<AudioStreamPacket> packet) = 0;
     virtual void SendWakeWordDetected(const std::string& wake_word);
+    // 代发查询：与唤醒上报同帧型（listen detect + text），服务器跳过 ASR 直接进 LLM。
+    // 供闹钟到点播报等设备自主发起的文本查询使用。
+    virtual void SendQuery(const std::string& text);
     virtual void SendStartListening(ListeningMode mode);
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
