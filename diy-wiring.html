@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>面包板小布 · 装配图</title>
+<style>
+  :root {
+    --bg: #FAF7F2;
+    --ink: #262420;
+    --muted: #6E675C;
+    --card: #FFFFFF;
+    --line: #E4DDD2;
+    --accent: #B26A00;
+    --wire-red: #D64541;
+    --wire-blue: #2B6CB0;
+    --wire-green: #2F855A;
+    --wire-amber: #C77D0A;
+    --wire-gnd: #4A463F;
+    --wire-purple: #7A5FA8;
+    --bb: #EDEAE2;
+    --bb-edge: #D8D2C6;
+    --hole: #C9C2B4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #191713; --ink: #EDE7DB; --muted: #9C9284; --card: #221F1A; --line: #38332A;
+      --accent: #E0A43C;
+      --wire-red: #E05A56; --wire-blue: #5B9BD5; --wire-green: #48A97A; --wire-amber: #E0A43C; --wire-gnd: #B9B2A6; --wire-purple: #A08BD0;
+      --bb: #2A2722; --bb-edge: #3A342B; --hole: #4A4436;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #191713; --ink: #EDE7DB; --muted: #9C9284; --card: #221F1A; --line: #38332A;
+    --accent: #E0A43C;
+    --wire-red: #E05A56; --wire-blue: #5B9BD5; --wire-green: #48A97A; --wire-amber: #E0A43C; --wire-gnd: #B9B2A6;
+    --bb: #2A2722; --bb-edge: #3A342B; --hole: #4A4436;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.75 -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    padding: 40px 20px 72px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+  .eyebrow {
+    font: 600 12px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: .22em;
+    color: var(--accent);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  h1 { font-size: 30px; font-weight: 700; letter-spacing: .01em; text-wrap: balance; margin-bottom: 8px; }
+  .lede { color: var(--muted); max-width: 64ch; margin-bottom: 28px; }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 40px; }
+  h2 {
+    font-size: 18px; font-weight: 700; margin-bottom: 14px;
+    padding-top: 18px; border-top: 1px solid var(--line);
+  }
+  h2 .n { color: var(--accent); font-family: ui-monospace, Menlo, monospace; font-size: 14px; margin-right: 8px; }
+
+  .diagram {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px; overflow-x: auto;
+  }
+  .diagram svg { display: block; min-width: 1000px; width: 100%; height: auto; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; margin-top: 14px; }
+  .legend span {
+    font: 500 12.5px/1 ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--muted); display: inline-flex; align-items: center; gap: 7px;
+  }
+  .swatch { width: 22px; height: 4px; border-radius: 2px; }
+
+  .stepper { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+  .stepper button {
+    font: 600 12.5px/1 -apple-system, "PingFang SC", sans-serif;
+    padding: 9px 14px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--card); color: var(--muted);
+  }
+  .stepper button:hover { border-color: var(--accent); color: var(--ink); }
+  .stepper button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .stepper button.active { background: var(--accent); border-color: var(--accent); color: #FFF; }
+
+  .diagram .w { transition: opacity .25s; }
+  .scr-el { display: none; }
+  .diagram[data-mode="scr"] .scr-el { display: block; }
+  .diagram[data-mode] .w { opacity: .05; }
+  .diagram[data-mode="pwr"]  .w.pwr  { opacity: .95; }
+  .diagram[data-mode="mic1"] .w.mic1 { opacity: .95; }
+  .diagram[data-mode="mic2"] .w.mic2 { opacity: .95; }
+  .diagram[data-mode="amp"]  .w.amp  { opacity: .95; }
+  .diagram[data-mode="scr"]  .w.scr  { opacity: .95; }
+
+  .stepcard {
+    display: none; background: var(--card); border: 1px solid var(--line);
+    border-radius: 8px; padding: 16px 20px; margin-top: 12px; font-size: 14px;
+  }
+  .stepcard.show { display: block; }
+  .stepcard h3 { font-size: 15px; margin-bottom: 8px; }
+  .stepcard ol { margin-left: 22px; }
+  .stepcard li { margin-bottom: 7px; }
+  .stepcard li b { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13px; }
+  .stepcard .hint { color: var(--muted); font-size: 13px; margin-top: 10px; border-top: 1px dashed var(--line); padding-top: 10px; }
+
+  .keys { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+  .key {
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; font-size: 13.5px; line-height: 1.65;
+  }
+  .key b { display: block; font-size: 14px; margin-bottom: 4px; }
+  .key .tag {
+    font: 600 10.5px/1 ui-monospace, Menlo, monospace; letter-spacing: .08em;
+    color: var(--accent); display: inline-block; margin-bottom: 6px;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+  td { font-variant-numeric: tabular-nums; }
+  .pin { font: 600 12.5px/1.6 ui-monospace, "SF Mono", Menlo, monospace; white-space: nowrap; }
+  .tbl-wrap { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px; overflow-x: auto; }
+  .c-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+
+  .note { color: var(--muted); font-size: 13px; margin-top: 10px; }
+  .warn li { margin-left: 20px; margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <p class="eyebrow">DIY 硬件装配 · ESP32-S3</p>
+  <h1>面包板小布 · 装配图</h1>
+  <p class="lede">按你买的套装画的<b>俯视装配图</b>：两块 400 孔面包板背胶拼接成一块长板，
+  DevKitC-1 居中跨槽插，两块 INMP441 在左、MAX98357A 在右、喇叭接功放端子。
+  共 19 根<b>公对公</b>杜邦线拱线连接；两个麦的级联不占额外线——靠
+  <b>「同色两根线插开发板同一引脚列的不同孔」</b>实现（面包板每一列 5 孔内部连通）。
+  功放的 SD / GAIN 两脚<b>不能悬空</b>（见第④步与避坑节），另有一颗 470µF 电容并联在 VIN/GND 上。
+  屏幕为可选件（表情脸 25 号票，暂缓购买）——图默认不显示，点「⑤ 屏幕」按钮可预览接法。</p>
+
+  <section>
+    <div class="stepper" role="tablist" aria-label="分步接线">
+      <button type="button" class="active" data-mode="">总览（19 根）</button>
+      <button type="button" data-mode="pwr">① 电源与地 · 6 根</button>
+      <button type="button" data-mode="mic1">② 麦克风① · 4 根</button>
+      <button type="button" data-mode="mic2">③ 麦克风② · 4 根</button>
+      <button type="button" data-mode="amp">④ 功放与喇叭 · 5 根 + 电容</button>
+      <button type="button" data-mode="scr">⑤ 屏幕 · 可选（暂缓）</button>
+    </div>
+    <div class="diagram">
+      <svg viewBox="0 0 1320 740" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="俯视装配图：拼接面包板上插着两块 INMP441、居中的 DevKitC-1、右侧 MAX98357A，公对公杜邦线按颜色连接，喇叭接在功放端子上">
+        <style>
+          .w    { fill: none; stroke-width: 3.4; stroke-linecap: round; opacity: .92; }
+          .red   { stroke: var(--wire-red); }
+          .gnd   { stroke: var(--wire-gnd); }
+          .blue  { stroke: var(--wire-blue); }
+          .green { stroke: var(--wire-green); }
+          .amber { stroke: var(--wire-amber); }
+          .purple{ stroke: var(--wire-purple); }
+          .board { fill: #33373E; stroke: #22252B; stroke-width: 1.5; }
+          .silk  { fill: #E8E4DC; font: 600 13px -apple-system, "PingFang SC", sans-serif; text-anchor: middle; }
+          .silk-s{ fill: #B9BFC8; font: 500 10.5px -apple-system, "PingFang SC", sans-serif; text-anchor: middle; }
+          .pad   { fill: #D9A441; stroke: #8A6420; stroke-width: 1; }
+          .padS  { fill: #D9A441; stroke: #8A6420; stroke-width: 1; }
+          .pinlbl{ font: 600 12px ui-monospace, "SF Mono", Menlo, monospace; fill: var(--ink); }
+          .anno  { font: 500 11.5px -apple-system, "PingFang SC", sans-serif; fill: var(--muted); }
+          .anno-b{ font: 600 11.5px -apple-system, "PingFang SC", sans-serif; fill: var(--accent); }
+          .rail  { stroke: var(--line); stroke-width: 1; }
+        </style>
+
+        <!-- ============ 面包板主体（两块 400 孔拼接） ============ -->
+        <defs>
+          <pattern id="holes" width="16" height="16" patternUnits="userSpaceOnUse">
+            <circle cx="8" cy="8" r="2.3" fill="var(--hole)"/>
+          </pattern>
+        </defs>
+        <rect x="70" y="180" width="1180" height="360" rx="6" fill="var(--bb)" stroke="var(--bb-edge)" stroke-width="2"/>
+        <!-- 电源轨（本方案不用，画出来示意） -->
+        <rect x="82" y="190" width="1156" height="14" fill="var(--hole)" opacity=".25"/>
+        <rect x="82" y="208" width="1156" height="14" fill="var(--hole)" opacity=".25"/>
+        <rect x="82" y="500" width="1156" height="14" fill="var(--hole)" opacity=".25"/>
+        <rect x="82" y="518" width="1156" height="14" fill="var(--hole)" opacity=".25"/>
+        <text class="anno" x="86" y="200" opacity=".8">+ 轨（本方案留空不用）</text>
+        <text class="anno" x="86" y="218" opacity=".8">− 轨</text>
+        <!-- 上下孔区 -->
+        <rect x="82" y="228" width="1156" height="80" fill="url(#holes)"/>
+        <rect x="82" y="348" width="1156" height="80" fill="url(#holes)"/>
+        <!-- 中间槽 -->
+        <rect x="82" y="312" width="1156" height="32" fill="var(--bb)"/>
+        <line class="rail" x1="82" y1="328" x2="1238" y2="328"/>
+        <!-- 拼接缝 -->
+        <line x1="660" y1="180" x2="660" y2="540" stroke="var(--wire-red)" stroke-width="1.5" stroke-dasharray="6 5" opacity=".55"/>
+        <text class="anno-b" x="660" y="566" text-anchor="middle">两块面包板的拼接缝：杜邦线跨缝没关系（线在空中），但孔列导通不跨缝——本图每个信号的孔都落在同一列里</text>
+
+        <!-- ============ 杜邦线（拱线，画在器件下层；类名 pwr/mic1/mic2/amp/scr 供分步高亮） ============ -->
+        <!-- 红：VDD / L/R=右 / VIN / SD / GAIN -->
+        <path class="w red pwr"   d="M120,296 Q 340,210 560,232"/>
+        <path class="w red pwr"   d="M260,296 Q 410,220 560,248"/>
+        <path class="w red mic2"  d="M340,296 Q 450,240 560,264"/>
+        <path class="w red pwr"   d="M860,260 Q 710,290 560,344"/>
+        <path class="w red amp"   d="M860,344 Q 690,250 560,280"/>
+        <path class="w red amp"   d="M860,330 Q 730,420 560,388"/>
+        <!-- 黑：GND / L/R=左 -->
+        <path class="w gnd pwr"   d="M136,296 Q 360,250 592,232"/>
+        <path class="w gnd pwr"   d="M276,296 Q 430,260 592,248"/>
+        <path class="w gnd mic1"  d="M200,296 Q 390,290 592,264"/>
+        <path class="w gnd pwr"   d="M860,274 Q 730,320 592,344"/>
+        <!-- 蓝：位时钟 SCK/BCLK → GPIO4 / GPIO7 -->
+        <path class="w blue mic1"  d="M152,296 Q 390,180 624,232"/>
+        <path class="w blue mic2"  d="M292,296 Q 460,200 624,248"/>
+        <path class="w blue amp"   d="M860,288 Q 740,330 624,344"/>
+        <!-- 绿：声道时钟 WS/LRC → GPIO5 / GPIO15 -->
+        <path class="w green mic1" d="M168,296 Q 420,160 656,232"/>
+        <path class="w green mic2" d="M308,296 Q 480,180 656,248"/>
+        <path class="w green amp"  d="M860,302 Q 750,350 656,344"/>
+        <!-- 琥珀：数据 SD/DIN → GPIO6 / GPIO16 -->
+        <path class="w amber mic1" d="M184,296 Q 440,140 688,232"/>
+        <path class="w amber mic2" d="M324,296 Q 500,160 688,248"/>
+        <path class="w amber amp"  d="M860,316 Q 760,365 688,344"/>
+        <!-- 喇叭线（功放端子 → 喇叭） -->
+        <path class="w gnd amp" style="stroke-width:2.6" d="M1008,284 Q 1060,258 1110,270"/>
+        <path class="w gnd amp" style="stroke-width:2.6" d="M1008,324 Q 1060,332 1110,292"/>
+        <!-- 470µF 电容：并联跨接 VIN ↔ GND（不占杜邦线） -->
+        <path class="w pwr amp" style="stroke:var(--muted);stroke-width:2.4" d="M794,424 Q 820,390 862,266"/>
+        <path class="w pwr amp" style="stroke:var(--muted);stroke-width:2.4" d="M810,424 Q 830,400 862,280"/>
+
+        <!-- 屏幕线（可选件：未购屏不接；点第⑤步按钮才显示） -->
+        <g class="scr-el">
+          <path class="w red scr"    d="M850,376 Q 700,300 560,264"/>
+          <path class="w gnd scr"    d="M850,388 Q 710,320 592,264"/>
+          <path class="w blue scr"   d="M850,400 Q 800,340 752,296"/>
+          <path class="w amber scr"  d="M850,412 Q 815,350 784,296"/>
+          <path class="w purple scr" d="M850,424 Q 770,380 720,372"/>
+          <path class="w purple scr" d="M850,436 Q 780,360 720,296"/>
+          <path class="w purple scr" d="M850,448 Q 795,400 752,372"/>
+          <path class="w purple scr" d="M850,460 Q 810,420 784,372"/>
+        </g>
+
+        <!-- ============ INMP441 ①（左） ============ -->
+        <rect class="board" x="100" y="238" width="116" height="62" rx="7"/>
+        <text class="silk" x="158" y="262" font-size="12">INMP441 ①</text>
+        <text class="silk-s" x="158" y="276">左声道</text>
+        <circle class="padS" cx="120" cy="296" r="4.5"/><text class="pinlbl" x="120" y="316" text-anchor="middle">VDD</text>
+        <circle class="padS" cx="136" cy="296" r="4.5"/><text class="pinlbl" x="136" y="316" text-anchor="middle">GND</text>
+        <circle class="padS" cx="152" cy="296" r="4.5"/><text class="pinlbl" x="152" y="316" text-anchor="middle">SCK</text>
+        <circle class="padS" cx="168" cy="296" r="4.5"/><text class="pinlbl" x="168" y="316" text-anchor="middle">WS</text>
+        <circle class="padS" cx="184" cy="296" r="4.5"/><text class="pinlbl" x="184" y="316" text-anchor="middle">SD</text>
+        <circle class="padS" cx="200" cy="296" r="4.5"/><text class="pinlbl" x="200" y="316" text-anchor="middle">L/R</text>
+
+        <!-- ============ INMP441 ②（左） ============ -->
+        <rect class="board" x="240" y="238" width="116" height="62" rx="7"/>
+        <text class="silk" x="298" y="262" font-size="12">INMP441 ②</text>
+        <text class="silk-s" x="298" y="276">右声道</text>
+        <circle class="padS" cx="260" cy="296" r="4.5"/><text class="pinlbl" x="260" y="316" text-anchor="middle">VDD</text>
+        <circle class="padS" cx="276" cy="296" r="4.5"/><text class="pinlbl" x="276" y="316" text-anchor="middle">GND</text>
+        <circle class="padS" cx="292" cy="296" r="4.5"/><text class="pinlbl" x="292" y="316" text-anchor="middle">SCK</text>
+        <circle class="padS" cx="308" cy="296" r="4.5"/><text class="pinlbl" x="308" y="316" text-anchor="middle">WS</text>
+        <circle class="padS" cx="324" cy="296" r="4.5"/><text class="pinlbl" x="324" y="316" text-anchor="middle">SD</text>
+        <circle class="padS" cx="340" cy="296" r="4.5"/><text class="pinlbl" x="340" y="316" text-anchor="middle">L/R</text>
+
+        <!-- ============ DevKitC-1（中央，跨槽） ============ -->
+        <rect class="board" x="520" y="222" width="290" height="216" rx="10"/>
+        <rect class="board" x="618" y="196" width="94" height="30" rx="4"/>
+        <text class="silk-s" x="665" y="215">USB 供电 / 烧录</text>
+        <text class="silk" x="665" y="252" font-size="14">DevKitC-1</text>
+        <text class="silk-s" x="665" y="268">N16R8 · 双排针跨中间槽插</text>
+        <circle cx="780" cy="240" r="10" fill="#22252B" stroke="#D9A441" stroke-width="1.5"/>
+        <text class="silk-s" x="762" y="244" text-anchor="end">BOOT</text>
+        <!-- 上排引脚（面向麦克风） -->
+        <circle class="pad" cx="560" cy="296" r="5.5"/><text class="pinlbl" x="560" y="286" text-anchor="middle">3V3</text>
+        <circle class="pad" cx="592" cy="296" r="5.5"/><text class="pinlbl" x="592" y="286" text-anchor="middle">GND</text>
+        <circle class="pad" cx="624" cy="296" r="5.5"/><text class="pinlbl" x="624" y="286" text-anchor="middle">GPIO4</text>
+        <circle class="pad" cx="656" cy="296" r="5.5"/><text class="pinlbl" x="656" y="286" text-anchor="middle">GPIO5</text>
+        <circle class="pad" cx="688" cy="296" r="5.5"/><text class="pinlbl" x="688" y="286" text-anchor="middle">GPIO6</text>
+        <!-- 下排引脚（面向功放） -->
+        <circle class="pad" cx="560" cy="372" r="5.5"/><text class="pinlbl" x="560" y="392" text-anchor="middle">5V</text>
+        <circle class="pad" cx="592" cy="372" r="5.5"/><text class="pinlbl" x="592" y="392" text-anchor="middle">GND</text>
+        <circle class="pad" cx="624" cy="372" r="5.5"/><text class="pinlbl" x="624" y="392" text-anchor="middle">GPIO7</text>
+        <circle class="pad" cx="656" cy="372" r="5.5"/><text class="pinlbl" x="656" y="392" text-anchor="middle">GPIO15</text>
+        <circle class="pad" cx="688" cy="372" r="5.5"/><text class="pinlbl" x="688" y="392" text-anchor="middle">GPIO16</text>
+        <!-- 上排右段 / 下排右段：屏幕引脚 -->
+        <circle class="pad" cx="720" cy="296" r="5.5"/><text class="pinlbl" x="720" y="286" text-anchor="middle">GPIO11</text>
+        <circle class="pad" cx="752" cy="296" r="5.5"/><text class="pinlbl" x="752" y="286" text-anchor="middle">GPIO12</text>
+        <circle class="pad" cx="784" cy="296" r="5.5"/><text class="pinlbl" x="784" y="286" text-anchor="middle">GPIO13</text>
+        <circle class="pad" cx="720" cy="372" r="5.5"/><text class="pinlbl" x="720" y="392" text-anchor="middle">GPIO9</text>
+        <circle class="pad" cx="752" cy="372" r="5.5"/><text class="pinlbl" x="752" y="392" text-anchor="middle">GPIO10</text>
+        <circle class="pad" cx="784" cy="372" r="5.5"/><text class="pinlbl" x="784" y="392" text-anchor="middle">GPIO14</text>
+
+        <!-- 级联提示：目标列的两根线 -->
+        <rect x="616" y="228" width="16" height="32" fill="none" stroke="var(--wire-blue)" stroke-width="1.5" rx="3" opacity=".8"/>
+        <rect x="648" y="228" width="16" height="32" fill="none" stroke="var(--wire-green)" stroke-width="1.5" rx="3" opacity=".8"/>
+        <rect x="680" y="228" width="16" height="32" fill="none" stroke="var(--wire-amber)" stroke-width="1.5" rx="3" opacity=".8"/>
+        <text class="anno-b" x="624" y="180" text-anchor="middle">↑ 同色两根线插同一列的两个孔（列内连通 = 级联）</text>
+
+        <!-- ============ MAX98357A（右） ============ -->
+        <rect class="board" x="860" y="248" width="140" height="112" rx="8"/>
+        <text class="silk" x="930" y="270" font-size="12">MAX98357A</text>
+        <text class="silk-s" x="930" y="284">I2S 功放</text>
+        <circle class="padS" cx="860" cy="260" r="4.5"/><text class="pinlbl" x="852" y="264" text-anchor="end">VIN</text>
+        <circle class="padS" cx="860" cy="274" r="4.5"/><text class="pinlbl" x="852" y="278" text-anchor="end">GND</text>
+        <circle class="padS" cx="860" cy="288" r="4.5"/><text class="pinlbl" x="852" y="292" text-anchor="end">BCLK</text>
+        <circle class="padS" cx="860" cy="302" r="4.5"/><text class="pinlbl" x="852" y="306" text-anchor="end">LRC</text>
+        <circle class="padS" cx="860" cy="316" r="4.5"/><text class="pinlbl" x="852" y="320" text-anchor="end">DIN</text>
+        <circle class="padS" cx="860" cy="330" r="4.5"/><text class="pinlbl" x="852" y="334" text-anchor="end">GAIN</text>
+        <circle class="padS" cx="860" cy="344" r="4.5"/><text class="pinlbl" x="852" y="348" text-anchor="end">SD</text>
+        <rect x="992" y="272" width="16" height="24" rx="3" fill="#3E7A4F" stroke="#22252B"/>
+        <rect x="992" y="312" width="16" height="24" rx="3" fill="#3E7A4F" stroke="#22252B"/>
+        <text class="anno" x="1014" y="288">喇叭 +</text>
+        <text class="anno" x="1014" y="328">喇叭 −</text>
+
+        <!-- ============ 470µF 电容（板外注记，跨接 VIN↔GND） ============ -->
+        <rect x="788" y="386" width="28" height="38" rx="12" fill="#2B3A67" stroke="#1B2547" stroke-width="1.5"/>
+        <rect x="806" y="386" width="10" height="38" rx="5" fill="#C9CDD4" opacity=".9"/>
+        <text class="anno" x="802" y="440" text-anchor="middle">470µF/16V</text>
+        <text class="anno-b" x="802" y="456" text-anchor="middle">长脚(+)→VIN 列 · 短脚(−)→GND 列</text>
+
+        <!-- ============ ST7789 屏（可选件，右下） ============ -->
+        <g class="scr-el">
+          <rect class="board" x="850" y="362" width="160" height="112" rx="8"/>
+          <rect x="862" y="374" width="136" height="88" rx="4" fill="#14161A" stroke="#22252B"/>
+          <text class="silk-s" x="930" y="490" opacity=".9">ST7789 · 320×240 SPI（可选）</text>
+          <circle class="padS" cx="850" cy="376" r="4.5"/><text class="pinlbl" x="842" y="380" text-anchor="end">VCC</text>
+          <circle class="padS" cx="850" cy="388" r="4.5"/><text class="pinlbl" x="842" y="392" text-anchor="end">GND</text>
+          <circle class="padS" cx="850" cy="400" r="4.5"/><text class="pinlbl" x="842" y="404" text-anchor="end">SCL</text>
+          <circle class="padS" cx="850" cy="412" r="4.5"/><text class="pinlbl" x="842" y="416" text-anchor="end">SDA</text>
+          <circle class="padS" cx="850" cy="424" r="4.5"/><text class="pinlbl" x="842" y="428" text-anchor="end">RES</text>
+          <circle class="padS" cx="850" cy="436" r="4.5"/><text class="pinlbl" x="842" y="440" text-anchor="end">DC</text>
+          <circle class="padS" cx="850" cy="448" r="4.5"/><text class="pinlbl" x="842" y="452" text-anchor="end">CS</text>
+          <circle class="padS" cx="850" cy="460" r="4.5"/><text class="pinlbl" x="842" y="464" text-anchor="end">BLK</text>
+        </g>
+
+        <!-- ============ 喇叭（板外） ============ -->
+        <circle cx="1150" cy="280" r="40" fill="#4A463F" stroke="#22252B" stroke-width="2.5"/>
+        <circle cx="1150" cy="280" r="14" fill="#33373E" stroke="#22252B"/>
+        <text class="anno" x="1150" y="340" text-anchor="middle">4Ω 3W（带线，剪掉 1.25 端子</text>
+        <text class="anno" x="1150" y="356" text-anchor="middle">剥 3mm 插入绿色端子拧紧）</text>
+      </svg>
+    </div>
+
+    <div class="stepcard" data-step="pwr">
+      <h3>第①步 电源与地（3 红 + 3 黑）</h3>
+      <ol>
+        <li><b>红</b>：麦① VDD → 开发板「3V3」列任一空孔</li>
+        <li><b>红</b>：麦② VDD → 3V3 列另一个空孔</li>
+        <li><b>红</b>：功放 VIN → 开发板下排「5V」列</li>
+        <li><b>黑</b>：麦① GND → 上排「GND」列空孔</li>
+        <li><b>黑</b>：麦② GND → 上排 GND 列另一空孔</li>
+        <li><b>黑</b>：功放 GND → 下排 GND 列空孔</li>
+      </ol>
+      <p class="hint">口诀：每一列 5 孔内部连通，插同列哪个空孔都等价；但一个孔只插一根线。插完自查——红线只碰 3V3 / 5V，黑线只碰 GND。</p>
+    </div>
+
+    <div class="stepcard" data-step="mic1">
+      <h3>第②步 麦克风①（蓝 / 绿 / 黄 / 黑 各 1）</h3>
+      <ol>
+        <li><b>蓝</b>：SCK → 「GPIO4」列的上孔（记为孔 A）</li>
+        <li><b>绿</b>：WS → 「GPIO5」列的上孔（孔 A）</li>
+        <li><b>黄</b>：SD → 「GPIO6」列的上孔（孔 A）</li>
+        <li><b>黑</b>：L/R → 上排「GND」列空孔 ——这根决定它是<b>左声道</b></li>
+      </ol>
+      <p class="hint">这步结束后 GPIO4 / 5 / 6 三列各自的上孔已占用，下步的麦②要插同列的下一个空孔。</p>
+    </div>
+
+    <div class="stepcard" data-step="mic2">
+      <h3>第③步 麦克风②（蓝 / 绿 / 黄 / 红 各 1）——级联在这步自动完成</h3>
+      <ol>
+        <li><b>蓝</b>：SCK → 「GPIO4」列的下一个空孔（孔 B）</li>
+        <li><b>绿</b>：WS → 「GPIO5」列的孔 B</li>
+        <li><b>黄</b>：SD → 「GPIO6」列的孔 B</li>
+        <li><b>红</b>：L/R → 「3V3」列空孔 ——这根决定它是<b>右声道</b></li>
+      </ol>
+      <p class="hint">两块麦的同名脚落在同一列的不同孔 = 并联 = 级联。两根 L/R 一黑一红（一个接 GND 一个接 3V3）是整套接线里最容易漏/接反的地方。</p>
+    </div>
+
+    <div class="stepcard" data-step="amp">
+      <h3>第④步 功放与喇叭（5 根线 + 电容 + 喇叭）</h3>
+      <ol>
+        <li><b>蓝</b>：BCLK → 下排「GPIO7」列</li>
+        <li><b>绿</b>：LRC → 下排「GPIO15」列</li>
+        <li><b>黄</b>：DIN → 下排「GPIO16」列</li>
+        <li><b>红</b>：SD → 上排「3V3」列空孔 ——<b>必须接！</b>兼容模块无分压电阻，悬空 = 关断，完全无声；接 GND = 永久静音</li>
+        <li><b>红</b>：GAIN → 下排「5V」列空孔 ——固定 6dB 增益。悬空 9dB 音量一大就高音破音（实测踩坑）；接 GND 会升到 12dB 更糟</li>
+        <li><b>电容</b>：470µF/16V 直接插面包板，<b>长脚(+)</b> 插 VIN(5V) 列空孔、<b>短脚(−，壳上条纹侧)</b> 插 GND 列空孔——并联跨接，不占杜邦线，接反会鼓包</li>
+        <li><b>喇叭</b>：自带线剪掉 1.25 端子头、剥出 3mm 铜线，两根拧进功放的绿色端子（不占杜邦线）</li>
+      </ol>
+      <p class="hint">GAIN 是<b>上电时采样</b>的——改接后必须断电重启才生效。这步做完接上 USB 就能烧固件听声了（屏幕不亮是正常的，驱动在 25 号票）。</p>
+    </div>
+
+    <div class="stepcard" data-step="scr">
+      <h3>第⑤步 屏幕（可选——暂不买屏就整步跳过）</h3>
+      <ol>
+        <li><b>蓝</b>：SCL → 「GPIO12」列</li>
+        <li><b>黄</b>：SDA → 「GPIO13」列</li>
+        <li><b>紫</b>：RES → 「GPIO9」列</li>
+        <li><b>紫</b>：DC → 「GPIO11」列</li>
+        <li><b>紫</b>：CS → 「GPIO10」列</li>
+        <li><b>紫</b>：BLK → 「GPIO14」列 ——背光控制，将来「静默熄屏」靠它，别图省事接 3V3</li>
+      </ol>
+      <p class="hint">没有紫线就用别的颜色代替，插对列就行——颜色只是给人看的，电只认孔位。</p>
+    </div>
+
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--wire-red)"></i>电源 3V3 / 5V</span>
+      <span><i class="swatch" style="background:var(--wire-gnd)"></i>地 GND</span>
+      <span><i class="swatch" style="background:var(--wire-blue)"></i>位时钟 SCK / BCLK / SCL</span>
+      <span><i class="swatch" style="background:var(--wire-green)"></i>声道时钟 WS / LRC</span>
+      <span><i class="swatch" style="background:var(--wire-amber)"></i>数据 SD / DIN / SDA</span>
+      <span><i class="swatch" style="background:var(--wire-purple)"></i>屏幕控制 RES / DC / CS / BLK</span>
+    </div>
+    <p class="note">线色即杜邦线色标，照着插即可。图是俯视图：杜邦线拱在器件上方的空中，交叉不相连。</p>
+  </section>
+
+  <section>
+    <h2><span class="n">§1</span>面包板三件事（看懂就能插对）</h2>
+    <div class="keys">
+      <div class="key"><span class="tag">列连通</span><b>中间槽两侧，每一竖列 5 孔内部连通</b>
+        所以「开发板 GPIO4 那一列」= 5 个等效的 GPIO4 孔。两个麦的 SCK 线（蓝×2）就分别插这一列的两个孔——不用挤同一个孔，效果=并联。这就是级联的全部秘密。</div>
+      <div class="key"><span class="tag">插法</span><b>器件排针跨中间槽 / 单排模块插一行</b>
+        DevKitC-1 双排针正好骑在中间槽两侧压进去；两块 INMP441 和 MAX98357A 的单排针各插在上半区的一行里。排针插不进时检查是不是顶到了槽沿。</div>
+      <div class="key"><span class="tag">跨缝</span><b>线可以跨拼接缝，孔列不行</b>
+        两块 400 孔拼接后，杜邦线（空中拱线）随便跨；但每列孔的导通只在各自板内。本图已把每个信号的孔安排在同一列，照图插就没有跨列问题。电源轨全程不用，留空。</div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">§2</span>接线明细（19 根必接；20–27 为屏幕可选，暂缓）</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>#</th><th>从（模块脚）</th><th>到（插哪一列）</th><th>线色</th><th>作用</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td class="pin">INMP441 ① VDD</td><td class="pin">3V3 列 · 任一空孔</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td>麦①供电</td></tr>
+          <tr><td>2</td><td class="pin">INMP441 ① GND</td><td class="pin">GND 列（上排）</td><td><i class="c-dot" style="background:var(--wire-gnd)"></i>黑</td><td>麦①地</td></tr>
+          <tr><td>3</td><td class="pin">INMP441 ① SCK</td><td class="pin">GPIO4 列 · 孔 A</td><td><i class="c-dot" style="background:var(--wire-blue)"></i>蓝</td><td rowspan="3">双麦级联：与麦②同名脚同列不同孔</td></tr>
+          <tr><td>4</td><td class="pin">INMP441 ① WS</td><td class="pin">GPIO5 列 · 孔 A</td><td><i class="c-dot" style="background:var(--wire-green)"></i>绿</td></tr>
+          <tr><td>5</td><td class="pin">INMP441 ① SD</td><td class="pin">GPIO6 列 · 孔 A</td><td><i class="c-dot" style="background:var(--wire-amber)"></i>黄</td></tr>
+          <tr><td>6</td><td class="pin">INMP441 ① L/R</td><td class="pin">GND 列（上排）· 空孔</td><td><i class="c-dot" style="background:var(--wire-gnd)"></i>黑</td><td>= 左声道（接 GND）</td></tr>
+          <tr><td>7</td><td class="pin">INMP441 ② VDD</td><td class="pin">3V3 列 · 另一空孔</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td>麦②供电</td></tr>
+          <tr><td>8</td><td class="pin">INMP441 ② GND</td><td class="pin">GND 列（上排）</td><td><i class="c-dot" style="background:var(--wire-gnd)"></i>黑</td><td>麦②地</td></tr>
+          <tr><td>9</td><td class="pin">INMP441 ② SCK</td><td class="pin">GPIO4 列 · 孔 B</td><td><i class="c-dot" style="background:var(--wire-blue)"></i>蓝</td><td rowspan="3">级联的另一半：同列不同孔</td></tr>
+          <tr><td>10</td><td class="pin">INMP441 ② WS</td><td class="pin">GPIO5 列 · 孔 B</td><td><i class="c-dot" style="background:var(--wire-green)"></i>绿</td></tr>
+          <tr><td>11</td><td class="pin">INMP441 ② SD</td><td class="pin">GPIO6 列 · 孔 B</td><td><i class="c-dot" style="background:var(--wire-amber)"></i>黄</td></tr>
+          <tr><td>12</td><td class="pin">INMP441 ② L/R</td><td class="pin">3V3 列 · 空孔</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td>= 右声道（接 3V3）</td></tr>
+          <tr><td>13</td><td class="pin">MAX98357A VIN</td><td class="pin">5V 列（下排）</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td>功放供电（USB 5V）</td></tr>
+          <tr><td>14</td><td class="pin">MAX98357A GND</td><td class="pin">GND 列（下排）</td><td><i class="c-dot" style="background:var(--wire-gnd)"></i>黑</td><td>功放地</td></tr>
+          <tr><td>15</td><td class="pin">MAX98357A BCLK</td><td class="pin">GPIO7 列</td><td><i class="c-dot" style="background:var(--wire-blue)"></i>蓝</td><td rowspan="3">I2S 播放通道</td></tr>
+          <tr><td>16</td><td class="pin">MAX98357A LRC</td><td class="pin">GPIO15 列</td><td><i class="c-dot" style="background:var(--wire-green)"></i>绿</td></tr>
+          <tr><td>17</td><td class="pin">MAX98357A DIN</td><td class="pin">GPIO16 列</td><td><i class="c-dot" style="background:var(--wire-amber)"></i>黄</td></tr>
+          <tr><td>18</td><td class="pin">MAX98357A SD</td><td class="pin">3V3 列 · 空孔</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td><b>必须接！</b>兼容模块无分压：悬空 = 关断无声</td></tr>
+          <tr><td>19</td><td class="pin">MAX98357A GAIN</td><td class="pin">5V 列 · 空孔</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td>固定 6dB 增益（悬空 9dB 破音，接 GND 12dB 更糟）；上电采样，改后断电重启</td></tr>
+          <tr><td>20</td><td class="pin">ST7789 VCC</td><td class="pin">3V3 列 · 空孔</td><td><i class="c-dot" style="background:var(--wire-red)"></i>红</td><td rowspan="8">可选：屏幕（25 号票表情脸）。<b>未购暂缓</b>——将来买屏（ST7789 320×240 SPI）时再接。BLK 必须接 GPIO（熄屏省电），不能接 3V3 常亮</td></tr>
+          <tr><td>21</td><td class="pin">ST7789 GND</td><td class="pin">GND 列 · 空孔</td><td><i class="c-dot" style="background:var(--wire-gnd)"></i>黑</td></tr>
+          <tr><td>22</td><td class="pin">ST7789 SCL</td><td class="pin">GPIO12 列</td><td><i class="c-dot" style="background:var(--wire-blue)"></i>蓝</td></tr>
+          <tr><td>23</td><td class="pin">ST7789 SDA</td><td class="pin">GPIO13 列</td><td><i class="c-dot" style="background:var(--wire-amber)"></i>黄</td></tr>
+          <tr><td>24</td><td class="pin">ST7789 RES</td><td class="pin">GPIO9 列</td><td><i class="c-dot" style="background:var(--wire-purple)"></i>紫</td></tr>
+          <tr><td>25</td><td class="pin">ST7789 DC</td><td class="pin">GPIO11 列</td><td><i class="c-dot" style="background:var(--wire-purple)"></i>紫</td></tr>
+          <tr><td>26</td><td class="pin">ST7789 CS</td><td class="pin">GPIO10 列</td><td><i class="c-dot" style="background:var(--wire-purple)"></i>紫</td></tr>
+          <tr><td>27</td><td class="pin">ST7789 BLK</td><td class="pin">GPIO14 列</td><td><i class="c-dot" style="background:var(--wire-purple)"></i>紫</td></tr>
+          <tr><td>—</td><td class="pin">喇叭线（自带）</td><td class="pin">功放绿色端子 + / −</td><td>灰</td><td>剪掉 1.25 端子头，剥 3mm 拧入；不占杜邦线</td></tr>
+          <tr><td>—</td><td class="pin">电解电容 470µF/16V</td><td class="pin">VIN(5V) 列 ↔ GND 列 · 各一空孔</td><td>—</td><td>电源储备，消高音破音；长脚(+) 朝 VIN，接反鼓包；不占杜邦线</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="note">「孔 A / 孔 B」= 同列两个不同孔，先后随意。BOOT 键（GPIO0）板载，长按 5 秒进家长模式，不占线。套装只带 10 根公对公——<b>下单时加一包 20 根装</b>（19 根必接，剩下的当备件，排查接触不良时换线全靠它）。</p>
+  </section>
+
+  <section>
+    <h2><span class="n">§3</span>插装顺序建议</h2>
+    <div class="tbl-wrap">
+      <table>
+        <thead><tr><th>步</th><th>做什么</th><th>要点</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>两块面包板背胶拼接</td><td>对齐边沿拼成一块长板；缝隙越小列孔越正</td></tr>
+          <tr><td>2</td><td>DevKitC-1 双排针骑中间槽压入</td><td>整段压在同一条<b>完整</b>中间槽上（任一块板内即可，不必居中）——<b>不要骑拼接缝</b>：缝处槽断开、两侧孔常错半孔，插不进；先对一端针位再整体压；USB 口朝外便于插线</td></tr>
+          <tr><td>3</td><td>两块 INMP441 插左半区（相隔 3–4 列）</td><td>两麦间距大些，AEC/降噪的空间信息才有区分度</td></tr>
+          <tr><td>4</td><td>MAX98357A 插右半区</td><td>喇叭端子朝外；SD 必须接 3V3 列、GAIN 接 5V 列（§2 表 #18 / #19），两脚都别悬空</td></tr>
+          <tr><td>5</td><td>按 §2 表插 19 根公对公线 + 电容</td><td>每插一根对一次色——红黑先通电源，再蓝绿黄信号</td></tr>
+          <tr><td>6</td><td>喇叭线剥头拧入功放端子，USB 线插电脑</td><td>电脑用 USB 3.0 口（蓝色）；平时可用 5V/2A 充电头</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="n">§4</span>避坑</h2>
+    <ul class="warn">
+      <li><b>排针没插到底 = 最高发故障</b>：每个器件压入后目视检查排针根部没悬空；上电没反应先按一遍所有器件。</li>
+      <li><b>任何器件都不骑拼接缝</b>：接缝处中间槽断开、两侧孔列常错半孔（背胶手拼对不齐 2.54 栅格），双排针/单排针骑缝都插不进或接触不良。开发板、每个模块整段落在一块板内；两块 INMP441 必须同一块板（级联同列靠板内导通）；只有杜邦线可以随便跨缝。嫌拼麻烦也可两板分开放、全靠杜邦线跨板。</li>
+      <li><b>别用这些 GPIO</b>：GPIO0（BOOT 键留着长按）、GPIO19/20（USB）、GPIO26–32（板载 Flash）、GPIO35–37（八线 PSRAM 占用）。本图选的 4/5/6/7/9/10/11/12/13/14/15/16 全部避开；若换引脚，固件里的宏要跟着改。</li>
+      <li><b>面包板效果预期</b>：麦克风间距和走线不受控，端到端能跑通，AEC/唤醒会比 BOX-3 的结构化麦阵打折。固件侧 <span class="pin">ADC_GAIN_DB</span>、<span class="pin">VAD_SILENCE_END_MS</span>、<span class="pin">BARGEIN_FRAMES</span> 三个旋钮届时按 README 验收清单调。</li>
+      <li><b>供电容量</b>：满音量 + WiFi 瞬时电流约 1A——电脑插 USB 3.0 口（900mA+），黑色 USB 2.0 口大音量时可能欠压重启。</li>
+      <li><b>功放三个脚的实测结论（2026-10-17）</b>：<b>SD 悬空 = 无声</b>（兼容模块无分压，关断）→ 必须接 3V3；<b>GAIN 悬空 = 9dB，高音破音</b> → 接 VIN(5V 列) 固定 6dB（接 GND 会到 12dB，更糟）；再并联 <b>470µF/16V 电容</b>跨 VIN/GND 作电源储备——长脚(+) 朝 VIN、短脚(−，壳上条纹侧) 朝 GND，<b>接反会发热鼓包</b>。GAIN 上电采样，改接后断电重启才生效。</li>
+      <li>全程<b>无需烙铁</b>：喇叭线用剪刀剥线即可。</li>
+    </ul>
+  </section>
+
+</div>
+<script>
+  var dia = document.querySelector('.diagram');
+  var btns = document.querySelectorAll('.stepper button');
+  var cards = document.querySelectorAll('.stepcard');
+  btns.forEach(function (b) {
+    b.addEventListener('click', function () {
+      btns.forEach(function (x) { x.classList.toggle('active', x === b); });
+      var m = b.getAttribute('data-mode');
+      if (m) { dia.setAttribute('data-mode', m); } else { dia.removeAttribute('data-mode'); }
+      cards.forEach(function (c) { c.classList.toggle('show', c.getAttribute('data-step') === m); });
+    });
+  });
+</script>
+</body>
+</html>

@@ -189,6 +189,14 @@ func (s *Session) handshake() error {
 		return fmt.Errorf("解析 hello 应答失败: %w", err)
 	}
 	if resp["type"] != "hello" {
+		// 智控台模式下未绑定设备：server 不发 hello，直接播 6 位绑定码
+		// （通常经 stt 文本带出），并把后续消息全部丢弃。
+		if text, _ := resp["text"].(string); text != "" {
+			return fmt.Errorf("服务器未下发 hello，而是发送文本：%s\n"+
+				"若为绑定提示：登录控制面板输入该 6 位码把设备（%s）绑定到账号后重试；"+
+				"或用 --device-id 指定一个已绑定的设备",
+				text, s.cfg.DeviceID)
+		}
 		return fmt.Errorf("hello 应答 type = %v, 期望 hello", resp["type"])
 	}
 	sessionID, _ := resp["session_id"].(string)
@@ -400,7 +408,9 @@ func (s *Session) handleTTS(msg map[string]any) {
 			return // 打断确认：收尾已在打断时用 Stop 完成，不再 Finish（防双重收尾）
 		}
 		s.player.Finish() // 本轮 TTS 收尾：让余量播完；打断才用 Stop（见 handleInput）
-		s.setState(StateIdle)
+		// 连续对话（对齐真设备 auto 模式）：播完回待输入态，直接输入下一句，
+		// 无需每轮重新唤醒；断线（handleDisconnect）才回待唤醒态。
+		s.setState(StateListening)
 		s.showPrompt()
 	}
 }

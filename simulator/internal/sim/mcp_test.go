@@ -365,12 +365,12 @@ func TestSessionMCPDoesNotBlockDialogue(t *testing.T) {
 		}
 	}
 
-	// 对话帧照常处理：stt/字幕打印、opus 到播放器、tts stop 回到待唤醒。
+	// 对话帧照常处理：stt/字幕打印、opus 到播放器、tts stop 后回待输入（连续对话）。
 	eventually(t, func() bool {
 		got := out.String()
 		return strings.Contains(got, "stt: 现在几点") &&
 			strings.Contains(got, "字幕: 现在是三点") &&
-			strings.Count(got, "待唤醒> \n") >= 2
+			strings.Count(got, "待输入> \n") >= 2
 	})
 	frames, _, _ := player.snapshot()
 	var oggBytes bytes.Buffer

@@ -260,9 +260,9 @@ func TestSessionPlaybackAfterBargeInRestartsCleanStream(t *testing.T) {
 	if !strings.Contains(got, "字幕: 好，再讲一个") {
 		t.Errorf("新轮字幕应正常打印, 实际输出:\n%s", got)
 	}
-	// 状态回正：新轮 stop 后回待唤醒。
-	if n := strings.Count(got, "待唤醒> \n"); n < 2 {
-		t.Errorf("新轮收尾后应回待唤醒态（至少 2 次）, 实际 %d 次:\n%s", n, got)
+	// 状态回正：新轮 stop 后回待输入（连续对话），待唤醒仅初始一次。
+	if n := strings.Count(got, "待输入> \n"); n < 2 {
+		t.Errorf("新轮收尾后应回待输入态（至少 2 次）, 实际 %d 次:\n%s", n, got)
 	}
 
 	if _, err := io.WriteString(stdin, "exit\n"); err != nil {

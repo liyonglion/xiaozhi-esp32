@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>功放电容并联接法</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+/* Layout: 单列——结论条 + 大图 + 等效电路 + 两张避错卡，沿用 wiring-diagram.html 的 token 体系 */
+:root {
+  --bg: #f6f7f4;
+  --surface: #ffffff;
+  --ink: #22302c;
+  --ink-dim: #5d6d67;
+  --line: #d7ddd6;
+  --accent: #1a7f5c;
+  --warn-bg: #fdf3e4;
+  --warn-ink: #8a4b12;
+  --warn-line: #ecc98f;
+  --danger-bg: #fbeceb;
+  --danger-ink: #a03028;
+  --danger-line: #e9b3ae;
+  --ok-bg: #eaf4ee;
+  --ok-ink: #1a6b4b;
+  --ok-line: #b9dcc9;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --body: -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --w-5v: #d24a44;
+  --w-gnd: #68757c;
+  --mod-fill: #eef0ec;
+  --mod-line: #9aa79f;
+  --svg-text: #22302c;
+  --board: #ece9e2;
+  --board-hole: #d8d4cc;
+  --board-rail-vin: #eeb6b2;
+  --board-rail-gnd: #c2cbd1;
+  --cap-body: #2b3a67;
+  --cap-stripe: #c9cdd4;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #171d1b;
+    --surface: #1f2724;
+    --ink: #e4ebe6;
+    --ink-dim: #93a39b;
+    --line: #33403a;
+    --accent: #48bb8d;
+    --warn-bg: #2e2517;
+    --warn-ink: #e5b878;
+    --warn-line: #6b5327;
+    --danger-bg: #301b19;
+    --danger-ink: #e79a92;
+    --danger-line: #6e3a34;
+    --ok-bg: #1d2c25;
+    --ok-ink: #6fce9f;
+    --ok-line: #2f4d3d;
+    --w-5v: #e57f79;
+    --w-gnd: #93a39b;
+    --mod-fill: #232c29;
+    --mod-line: #4c5a53;
+    --svg-text: #e4ebe6;
+    --board: #242b28;
+    --board-hole: #2f3733;
+    --board-rail-vin: #5c3430;
+    --board-rail-gnd: #3a454b;
+    --cap-body: #35477e;
+    --cap-stripe: #9aa3ad;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #171d1b;
+  --surface: #1f2724;
+  --ink: #e4ebe6;
+  --ink-dim: #93a39b;
+  --line: #33403a;
+  --accent: #48bb8d;
+  --warn-bg: #2e2517;
+  --warn-ink: #e5b878;
+  --warn-line: #6b5327;
+  --danger-bg: #301b19;
+  --danger-ink: #e79a92;
+  --danger-line: #6e3a34;
+  --ok-bg: #1d2c25;
+  --ok-ink: #6fce9f;
+  --ok-line: #2f4d3d;
+  --w-5v: #e57f79;
+  --w-gnd: #93a39b;
+  --mod-fill: #232c29;
+  --mod-line: #4c5a53;
+  --svg-text: #e4ebe6;
+  --board: #242b28;
+  --board-hole: #2f3733;
+  --board-rail-vin: #5c3430;
+  --board-rail-gnd: #3a454b;
+  --cap-body: #35477e;
+  --cap-stripe: #9aa3ad;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 15px;
+  line-height: 1.65;
+  padding: 20px 16px 48px;
+}
+.wrap { max-width: 940px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 6px 0 4px; letter-spacing: .5px; }
+.sub { color: var(--ink-dim); font-size: 13.5px; margin: 0 0 14px; }
+.eyebrow {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 2px;
+  text-transform: uppercase; color: var(--accent); margin: 0 0 8px;
+}
+.verdict {
+  background: var(--ok-bg); border: 1px solid var(--ok-line); border-radius: 10px;
+  padding: 12px 16px; margin: 0 0 18px; font-size: 15px; color: var(--ok-ink);
+}
+.verdict b { color: inherit; }
+.diagram-scroll {
+  overflow-x: auto; background: var(--surface);
+  border: 1px solid var(--line); border-radius: 10px; padding: 8px;
+}
+.diagram-scroll svg { display: block; min-width: 860px; width: 100%; height: auto; }
+.legend {
+  display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 12px 2px 0;
+  font-family: var(--mono); font-size: 12px; color: var(--ink-dim);
+}
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { width: 18px; height: 3px; border-radius: 2px; display: inline-block; }
+section { margin-top: 30px; }
+h2 { font-size: 16px; margin: 0 0 12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.card {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px 16px; font-size: 13.5px;
+}
+.card h3 { margin: 0 0 6px; font-size: 14px; }
+.card.danger { background: var(--danger-bg); border-color: var(--danger-line); }
+.card.danger h3 { color: var(--danger-ink); }
+.card p { margin: 0; }
+.eq-wrap {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 14px 16px; display: flex; gap: 18px; align-items: center; flex-wrap: wrap;
+}
+.eq-wrap svg { flex: 0 1 420px; min-width: 300px; display: block; height: auto; }
+.eq-note { flex: 1 1 260px; font-size: 13.5px; color: var(--ink-dim); margin: 0; }
+.eq-note b { color: var(--ink); }
+.checklist { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.checklist li {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+  padding: 10px 14px; font-size: 13.5px; display: flex; gap: 10px; align-items: baseline;
+}
+.num { font-family: var(--mono); font-weight: 600; color: var(--accent); }
+.pin { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; }
+.footnote { color: var(--ink-dim); font-size: 12.5px; margin-top: 10px; }
+.svg-label { font-family: var(--mono); font-size: 11px; fill: var(--svg-text); }
+.svg-mod-title { font-family: var(--body); font-size: 13px; font-weight: 700; fill: var(--svg-text); }
+.svg-note { font-family: var(--body); font-size: 11px; fill: var(--ink-dim); }
+.svg-strong { font-family: var(--body); font-size: 12px; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">Breadboard · Power Decoupling</p>
+<h1>功放电容并联接法</h1>
+<p class="sub">16V 470µF 电解电容跨接 MAX98357A 的 VIN / GND——高音破音的电源储备电容</p>
+
+<div class="verdict">
+两根线<b>都不用拔</b>：红线（5V → VIN）、黑线（GND → GND）保持原位。电容是<b>并联</b>加上去的——插进和它们<b>同一列</b>的空孔即可。
+</div>
+
+<div class="diagram-scroll">
+<svg viewBox="0 0 920 570" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="电容并联接法：面包板局部图">
+  <!-- ═══ DevKitC-1（只画电源两个脚） ═══ -->
+  <rect x="40" y="130" width="160" height="310" rx="10" fill="var(--mod-fill)" stroke="var(--mod-line)" stroke-width="1.5"/>
+  <text class="svg-mod-title" x="120" y="162" text-anchor="middle">ESP32-S3</text>
+  <text class="svg-mod-title" x="120" y="180" text-anchor="middle">DevKitC-1</text>
+  <rect x="88" y="196" width="64" height="26" rx="4" fill="none" stroke="var(--mod-line)"/>
+  <text class="svg-note" x="120" y="213" text-anchor="middle">USB</text>
+  <circle cx="200" cy="210" r="6" fill="var(--w-5v)"/>
+  <text class="svg-label" x="192" y="214" text-anchor="end">5V</text>
+  <circle cx="200" cy="430" r="6" fill="var(--w-gnd)"/>
+  <text class="svg-label" x="192" y="434" text-anchor="end">GND</text>
+
+  <!-- ═══ 面包板局部 ═══ -->
+  <rect x="390" y="70" width="290" height="440" rx="8" fill="var(--board)" stroke="var(--board-hole)" stroke-width="1.5"/>
+  <text class="svg-note" x="535" y="486" text-anchor="middle">面包板局部（俯视）</text>
+  <!-- 背景装饰孔 -->
+  <g fill="var(--board-hole)">
+    <circle cx="420" cy="190" r="4"/><circle cx="420" cy="230" r="4"/><circle cx="420" cy="270" r="4"/><circle cx="420" cy="310" r="4"/><circle cx="420" cy="350" r="4"/>
+    <circle cx="644" cy="190" r="4"/><circle cx="644" cy="230" r="4"/><circle cx="644" cy="270" r="4"/><circle cx="644" cy="310" r="4"/><circle cx="644" cy="350" r="4"/>
+  </g>
+  <!-- 内部连通导轨（金属夹片示意） -->
+  <rect x="444" y="182" width="9" height="176" rx="4" fill="var(--board-rail-vin)"/>
+  <rect x="544" y="182" width="9" height="176" rx="4" fill="var(--board-rail-gnd)"/>
+
+  <!-- VIN 列 5 孔 -->
+  <g>
+    <circle cx="470" cy="190" r="7" fill="var(--board-hole)"/>
+    <circle cx="470" cy="230" r="7" fill="var(--board-hole)"/>
+    <circle cx="470" cy="270" r="7" fill="var(--board-hole)"/>
+    <circle cx="470" cy="310" r="7" fill="var(--board-hole)"/>
+    <circle cx="470" cy="350" r="7" fill="var(--board-hole)"/>
+  </g>
+  <!-- GND 列 5 孔 -->
+  <g>
+    <circle cx="570" cy="190" r="7" fill="var(--board-hole)"/>
+    <circle cx="570" cy="230" r="7" fill="var(--board-hole)"/>
+    <circle cx="570" cy="270" r="7" fill="var(--board-hole)"/>
+    <circle cx="570" cy="310" r="7" fill="var(--board-hole)"/>
+    <circle cx="570" cy="350" r="7" fill="var(--board-hole)"/>
+  </g>
+  <text class="svg-label" x="470" y="158" text-anchor="middle" style="fill:var(--w-5v)">VIN 列</text>
+  <text class="svg-label" x="570" y="158" text-anchor="middle" style="fill:var(--w-gnd)">GND 列</text>
+  <text class="svg-note" x="497" y="418" text-anchor="middle">← 每列 5 孔内部连通 →</text>
+
+  <!-- ═══ MAX98357A 模块（插在两列上方） ═══ -->
+  <rect x="424" y="80" width="192" height="92" rx="6" fill="var(--mod-fill)" stroke="var(--mod-line)" stroke-width="1.5"/>
+  <text class="svg-mod-title" x="520" y="108" text-anchor="middle">MAX98357A 功放</text>
+  <text class="svg-note" x="520" y="124" text-anchor="middle">（其他脚照旧，未画出）</text>
+  <text class="svg-label" x="470" y="144" text-anchor="middle" style="fill:var(--w-5v)">VIN</text>
+  <text class="svg-label" x="570" y="144" text-anchor="middle" style="fill:var(--w-gnd)">GND</text>
+  <!-- 模块引脚插进两列顶孔 -->
+  <path d="M 470 150 L 470 185" stroke="var(--w-5v)" stroke-width="4" fill="none"/>
+  <path d="M 570 150 L 570 185" stroke="var(--w-gnd)" stroke-width="4" fill="none"/>
+
+  <!-- ═══ 电解电容 470µF（并联跨接） ═══ -->
+  <g>
+    <!-- 引脚：长脚 + → VIN 列，短脚 − → GND 列 -->
+    <path d="M 506 258 C 496 268 484 270 473 270" stroke="var(--ink)" stroke-width="3" fill="none"/>
+    <path d="M 534 262 C 544 268 556 270 567 270" stroke="var(--ink)" stroke-width="3" fill="none"/>
+    <!-- 立式圆柱主体 -->
+    <rect x="494" y="176" width="52" height="86" rx="24" fill="var(--cap-body)"/>
+    <!-- 负极条纹（壳上有条纹一侧 = 短脚） -->
+    <rect x="526" y="176" width="20" height="86" rx="10" fill="var(--cap-stripe)" opacity="0.85"/>
+    <text x="536" y="226" text-anchor="middle" font-size="16" font-weight="700" fill="var(--cap-body)">−</text>
+    <text x="510" y="226" text-anchor="middle" font-size="14" font-weight="700" fill="#ffffff">+</text>
+    <!-- 顶部椭圆暗示圆柱 -->
+    <ellipse cx="520" cy="176" rx="26" ry="7" fill="none" stroke="var(--cap-stripe)" stroke-width="1.5" opacity="0.6"/>
+    <text class="svg-strong" x="520" y="160" text-anchor="middle" fill="var(--ink)">470µF / 16V</text>
+    <text class="svg-note" x="466" y="292" text-anchor="end">长脚(+) 插 VIN 列</text>
+    <text class="svg-note" x="574" y="292">短脚(−·条纹侧) 插 GND 列</text>
+  </g>
+
+  <!-- ═══ 原有两根线：都不动 ═══ -->
+  <path d="M 206 210 C 310 210 350 350 462 350" fill="none" stroke="var(--w-5v)" stroke-width="3.5"/>
+  <text class="svg-strong" x="330" y="300" style="fill:var(--w-5v)">红线 · 不动</text>
+  <text class="svg-note" x="330" y="316">原位：5V → VIN 列任意孔</text>
+
+  <path d="M 206 430 C 310 430 400 352 462 350" fill="none" stroke="var(--w-gnd)" stroke-width="3.5" transform="translate(108,0)"/>
+  <text class="svg-strong" x="240" y="452" style="fill:var(--w-gnd)">黑线 · 不动</text>
+  <text class="svg-note" x="240" y="468">原位：GND → GND 列任意孔</text>
+</svg>
+</div>
+
+<div class="legend">
+  <span><i style="background:var(--w-5v)"></i>5V 电源（红线）</span>
+  <span><i style="background:var(--w-gnd)"></i>GND 地（黑线）</span>
+  <span><i style="background:var(--cap-body)"></i>电解电容本体</span>
+</div>
+
+<section>
+  <h2>为什么是并联（等效电路）</h2>
+  <div class="eq-wrap">
+    <svg viewBox="0 0 440 150" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="等效电路：电容并联在 VIN 与 GND 之间">
+      <text class="svg-label" x="30" y="44" style="fill:var(--w-5v)">5V</text>
+      <circle cx="36" cy="40" r="5" fill="var(--w-5v)"/>
+      <path d="M 41 40 L 170 40" stroke="var(--w-5v)" stroke-width="2.5" fill="none"/>
+      <path d="M 170 40 L 360 40" stroke="var(--w-5v)" stroke-width="2.5" fill="none"/>
+      <path d="M 360 40 L 384 40" stroke="var(--w-5v)" stroke-width="2.5" fill="none"/>
+      <path d="M 384 33 L 400 40 L 384 47 Z" fill="var(--w-5v)"/>
+      <text class="svg-label" x="404" y="44" style="fill:var(--w-5v)">VIN</text>
+      <path d="M 200 40 L 200 66" stroke="var(--ink)" stroke-width="2.5" fill="none"/>
+      <text x="188" y="60" font-size="12" font-weight="700" fill="var(--ink)">+</text>
+      <!-- 电解电容符号：直板 + 弯板 -->
+      <path d="M 178 66 L 232 66" stroke="var(--ink)" stroke-width="3" fill="none"/>
+      <path d="M 178 84 Q 205 96 232 84" stroke="var(--ink)" stroke-width="3" fill="none"/>
+      <text class="svg-label" x="244" y="80">470µF</text>
+      <path d="M 205 84 L 205 110" stroke="var(--ink)" stroke-width="2.5" fill="none"/>
+      <text x="214" y="102" font-size="12" font-weight="700" fill="var(--ink)">−</text>
+      <text class="svg-label" x="30" y="114" style="fill:var(--w-gnd)">GND</text>
+      <circle cx="36" cy="110" r="5" fill="var(--w-gnd)"/>
+      <path d="M 41 110 L 170 110" stroke="var(--w-gnd)" stroke-width="2.5" fill="none"/>
+      <path d="M 170 110 L 360 110" stroke="var(--w-gnd)" stroke-width="2.5" fill="none"/>
+      <path d="M 360 110 L 384 110" stroke="var(--w-gnd)" stroke-width="2.5" fill="none"/>
+      <path d="M 384 103 L 400 110 L 384 117 Z" fill="var(--w-gnd)"/>
+      <text class="svg-label" x="404" y="114" style="fill:var(--w-gnd)">GND</text>
+      <circle cx="200" cy="40" r="4" fill="var(--ink)"/>
+      <circle cx="205" cy="110" r="4" fill="var(--ink)"/>
+    </svg>
+    <p class="eq-note">电流从 5V <b>直接</b>流向 VIN，电容只是挂在旁边当「蓄水池」——高音瞬态大电流时它放电顶上，电压不塌，破音消失。电源路径上<b>没有任何东西被串进去、被替换</b>。</p>
+  </div>
+</section>
+
+<section>
+  <h2>两种错误接法</h2>
+  <div class="cards">
+    <div class="card danger">
+      <h3>✗ 把红线拔了，串进电容再接 VIN</h3>
+      <p>电容必须<b>跨接</b>在 VIN 和 GND 之间（并联），不是串在电源路径中间。串进去 = 供电被隔断，完全无声。红线两头保持原样。</p>
+    </div>
+    <div class="card danger">
+      <h3>✗ 极性接反</h3>
+      <p>短脚（壳上<b>白色条纹 +「−」</b>那一侧）必须朝 GND 列。接反的电解电容会发热、鼓包甚至炸裂，通电前务必再核对一次。</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>通电前核对（3 步，约 30 秒）</h2>
+  <ul class="checklist">
+    <li><span class="num">1</span><span>红线一头在 DevKitC-1 的 <span class="pin">5V</span>，另一头在功放 <span class="pin">VIN</span> 所在列的某个孔（<b>原位未动</b>）。</span></li>
+    <li><span class="num">2</span><span>黑线一头在 DevKitC-1 的 <span class="pin">GND</span>，另一头在功放 <span class="pin">GND</span> 所在列的某个孔（<b>原位未动</b>）。</span></li>
+    <li><span class="num">3</span><span>电容长脚(+) 在 VIN 列、短脚(−) 在 GND 列，与红线黑线<b>不同孔但同列</b>。之前的 SD → 3V3 线不动。</span></li>
+  </ul>
+  <p class="footnote">一列 5 孔不够用 3 个（模块脚 + 电容脚 + 杜邦线各占 1 孔）还有富余；若你的线原本插在别的列，只要保证电容和 VIN/GND 各自<b>同列</b>即可。</p>
+</section>
+
+</div>
+</body>
+</html>

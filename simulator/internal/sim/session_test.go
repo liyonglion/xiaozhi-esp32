@@ -85,6 +85,10 @@ type fakeServer struct {
 	connCount int      // 已完成的 WebSocket 升级次数
 	dialURLs  []string // 每次连接请求的完整 URL（含查询参数）
 	received  chan map[string]any
+
+	// helloOverride 非空时，收到 hello 不回欢迎语而回该帧（模拟智控台
+	// 模式下未绑定设备：server 直接下发绑定提示、丢弃后续消息）。
+	helloOverride map[string]any
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -125,14 +129,18 @@ func newFakeServer(t *testing.T) *fakeServer {
 				continue
 			}
 			if msg["type"] == "hello" {
-				resp := map[string]any{
-					"type":         "hello",
-					"version":      1,
-					"transport":    "websocket",
-					"audio_params": map[string]any{"format": "opus", "sample_rate": 24000, "channels": 1, "frame_duration": 60},
-					"session_id":   fs.sessionIDForConn(seq),
+				if fs.helloOverride != nil {
+					writeJSON(t, conn, fs.helloOverride)
+				} else {
+					resp := map[string]any{
+						"type":         "hello",
+						"version":      1,
+						"transport":    "websocket",
+						"audio_params": map[string]any{"format": "opus", "sample_rate": 24000, "channels": 1, "frame_duration": 60},
+						"session_id":   fs.sessionIDForConn(seq),
+					}
+					writeJSON(t, conn, resp)
 				}
-				writeJSON(t, conn, resp)
 			}
 			select {
 			case fs.received <- msg:
@@ -391,6 +399,32 @@ func TestSessionHelloHandshakeAndWakeFlow(t *testing.T) {
 }
 
 // 两段式输入：先「小智」唤醒进入待输入态，下一行整行作为查询发送。
+func TestSessionUnboundDeviceGetsBindHint(t *testing.T) {
+	// 智控台模式：未绑定设备收到的首帧是绑定提示而非 hello。
+	fs := newFakeServer(t)
+	fs.helloOverride = map[string]any{"type": "stt", "text": "请登录控制面板，输入945284，绑定设备", "session_id": "bind"}
+	stdinR, _ := scriptStdin(t)
+	out := &lockedBuffer{}
+
+	sess := newTestSession(t, fs, out, nil, &fakePlayer{}, stdinR)
+	done := make(chan error, 1)
+	go func() { done <- sess.Run() }()
+
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("未绑定场景期望 Run 返回错误，得到 nil")
+		}
+		for _, want := range []string{"请登录控制面板，输入945284，绑定设备", "控制面板", "de:ad:be:ef:ca:fe"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("错误信息缺少 %q:\n%v", want, err)
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run 未在 5 秒内返回")
+	}
+}
+
 func TestSessionTwoStageInput(t *testing.T) {
 	fs := newFakeServer(t)
 	stdinR, stdin := scriptStdin(t)
@@ -629,14 +663,14 @@ func TestSessionServerReplyDrivesPromptsAndPrinting(t *testing.T) {
 		return strings.Contains(got, "stt: 小智，你好") &&
 			strings.Contains(got, "情绪: happy 😊") &&
 			strings.Contains(got, "字幕: 嘿，你好呀") &&
-			// 两次待唤醒：初始一次 + tts stop 后一次（同步点）。
-			strings.Count(got, "待唤醒> \n") >= 2
+			// 连续对话：tts stop 后回待输入（播放中之后再次出现，作同步点）。
+			strings.Count(got, "待输入> \n") >= 2
 	})
 
 	got := out.String()
-	// 提示符顺序：待唤醒 → 待输入 → 播放中 → 待唤醒。
+	// 提示符顺序：待唤醒 → 待输入 → 播放中 → 待输入（连续对话，播完不回待唤醒）。
 	at := strings.Index(got, "待唤醒> \n")
-	for _, want := range []string{"待输入> \n", "播放中> \n", "待唤醒> \n"} {
+	for _, want := range []string{"待输入> \n", "播放中> \n", "待输入> \n"} {
 		next := strings.Index(got[at+1:], want)
 		if next < 0 {
 			t.Fatalf("提示符顺序不符，%q 未出现在 %q 之后，实际输出:\n%s", want, got[at:], got)
