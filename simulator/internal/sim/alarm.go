@@ -259,9 +259,14 @@ func (s *Session) fireAlarm(a alarm, now time.Time) {
 
 // alarmQueryText 代发查询的文本：server 以 listen detect 文本接收，跳过 ASR
 // 交给 LLM，回复经 TTS 下发（见 GLOSSARY「查询」的设备代发语义）。
+// 措辞必须是明确的播报指令——实测教训（2026-10-19）：写成「请叫醒我并提醒我」
+// 会被 LLM 当成新的设闹钟请求，反而再设一只闹钟。
 func alarmQueryText(a alarm) string {
-	if a.message == "" {
-		return "闹钟时间到了，请用一两句话叫醒我"
+	message := a.message
+	if message == "" {
+		message = "时间到了，快醒过来啦"
 	}
-	return "闹钟时间到了，请叫醒我并提醒我：" + a.message
+	return "设备闹钟到点，请直接向用户播报下面这句提醒把人叫醒。" +
+		"这是播报指令，不是新的用户请求：不要设置新闹钟，不要调用任何工具。" +
+		"提醒内容：「" + message + "」"
 }
