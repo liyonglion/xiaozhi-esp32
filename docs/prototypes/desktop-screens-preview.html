@@ -1,0 +1,441 @@
+<!-- PROTOTYPE (throwaway) — 小智桌面三屏 1:1 样稿：三套风格(#a/#b/#c) × 三屏(天气/学习/待办)，
+     底部浮条或 ←/→ 切换；定稿后此文件移入 throwaway 分支，不进 main。画布 320×480 = ST7796 物理像素。 -->
+<title>小智桌面三屏原型</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&family=Long+Cang&family=Noto+Sans+SC:wght@400;500;700;900&display=swap">
+<style>
+/* ===== 页面外壳（跟随查看者主题）===== */
+:root{
+  --bg:#EDF0F5; --surface:#FFFFFF; --fg:#1B2430; --dim:#5A6A80; --line:#D8DEE8; --accent:#3560E0;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14171D; --surface:#1D222B; --fg:#E8ECF3; --dim:#94A1B5; --line:#2B3340; --accent:#7B96FF;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14171D; --surface:#1D222B; --fg:#E8ECF3; --dim:#94A1B5; --line:#2B3340; --accent:#7B96FF;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg); color:var(--fg);
+  font-family:'Noto Sans SC',system-ui,-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;
+  padding:28px 20px 130px; margin:0;
+}
+.page-head{max-width:1100px;margin:0 auto 6px}
+.page-head h1{font-size:24px;margin:0 0 6px}
+.page-meta{font-size:14px;color:var(--dim);line-height:1.7;margin:0}
+.page-meta b{color:var(--fg);font-weight:500}
+
+.variant[hidden]{display:none!important}
+.variant{max-width:1100px;margin:26px auto 0}
+.v-head{margin:0 0 16px}
+.v-head h2{font-size:19px;margin:0 0 6px}
+.v-head p{font-size:14px;color:var(--dim);margin:0 0 3px;line-height:1.65}
+
+.screens{display:flex;flex-wrap:wrap;gap:26px;justify-content:center;align-items:flex-start}
+figure{margin:0}
+figcaption{font-size:13px;color:var(--dim);text-align:center;margin-top:8px}
+.swipe-note{max-width:1100px;margin:14px auto 0;font-size:13px;color:var(--dim);text-align:center}
+
+/* 屏幕外框（页内装饰，模拟模组外壳；内部 .screen 恒为 320×480）*/
+.bezel{background:#181C22;border-radius:26px;padding:10px;box-shadow:0 2px 12px rgba(0,0,0,.22)}
+.screen{width:320px;height:480px;border-radius:16px;overflow:hidden;display:flex;flex-direction:column;position:relative}
+
+/* 共享小件 */
+.sbar{display:flex;justify-content:space-between;align-items:center;font-size:14px;flex:none}
+.sbar svg{width:16px;height:12px}
+.dots{display:flex;gap:7px;justify-content:center;margin-top:auto;flex:none;padding-top:6px}
+.dots i{width:9px;height:9px;border-radius:50%;background:currentColor;opacity:.22}
+.dots i.on{opacity:1}
+.bar{height:10px;border-radius:999px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:999px}
+.todo{display:flex;align-items:center;gap:12px;width:100%;border:0;background:none;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left;appearance:none}
+.todo .t-text{min-width:0;flex:1}
+.cbx{flex:none;display:grid;place-items:center;font-size:16px;font-weight:700;color:transparent}
+button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+/* ============ 风格 A · 儿童大字卡 ============ */
+.s-a{background:#EAF5FE;color:#123A5E;padding:14px 16px;gap:10px;font-family:'ZCOOL KuaiLe','Noto Sans SC',sans-serif}
+.s-a .sbar{color:#3D6285;font-family:'Noto Sans SC',sans-serif}
+.s-a .dots{color:#FF8A00}
+.a-loc{text-align:center;font-size:18px}
+.a-hero{text-align:center}
+.a-wicon{font-size:56px;line-height:1.15}
+.a-temp{font-size:62px;line-height:1.08}
+.a-cond{font-size:20px;color:#FF8A00}
+.a-chips{display:flex;gap:10px;justify-content:center}
+.a-chip{background:#FFFFFF;border-radius:999px;padding:7px 14px;font-size:15px;color:#2A5378}
+.a-days{display:flex;gap:10px}
+.a-card{flex:1;background:#FFFFFF;border-radius:16px;padding:10px 10px 12px;text-align:center;display:flex;flex-direction:column;gap:3px}
+.a-card .d-day{font-size:15px;color:#6B87A6}
+.a-card .d-ic{font-size:26px;line-height:1.2}
+.a-card .d-t{font-size:16px}
+.a-card .d-n{font-size:14px;color:#6B87A6}
+.a-sec-title{text-align:center;font-size:20px;margin-top:2px}
+.a-score{text-align:center;line-height:1;margin-top:2px}
+.a-num{font-size:74px;color:#FF8A00}
+.a-den{font-size:26px;color:#3D6285}
+.a-sub{text-align:center;font-size:15px;color:#6B87A6}
+.a-stars{text-align:center;font-size:30px;letter-spacing:5px;line-height:1.2}
+.a-week{background:#FFFFFF;border-radius:16px;padding:12px 14px}
+.a-week-head{display:flex;justify-content:space-between;align-items:baseline;font-size:16px;margin-bottom:8px}
+.a-pct{font-size:26px;color:#2FA96E}
+.s-a .bar{background:#FFE3BD}
+.s-a .bar i{background:#FF8A00}
+.a-todos{display:flex;flex-direction:column;gap:10px}
+.a-todo{background:#FFFFFF;border-radius:16px;padding:12px 14px;font-size:19px}
+.a-todo .cbx{width:26px;height:26px;border-radius:8px;border:3px solid #B8CCE0}
+.a-todo.done .cbx{background:#FF8A00;border-color:#FF8A00;color:#FFFFFF}
+.a-todo.done .t-text{color:#9AB0C6;text-decoration:line-through}
+.a-count{font-size:15px;color:#6B87A6;margin-left:6px}
+.a-add{border:2px dashed #A9C4DB;border-radius:14px;padding:9px 8px;text-align:center;font-size:14px;color:#6B87A6}
+
+/* ============ 风格 B · 深色仪表盘 ============ */
+.s-b{background:#0C1322;color:#E9EFFA;padding:14px 18px;font-variant-numeric:tabular-nums}
+.s-b .sbar{color:#8296B3;padding-bottom:10px;border-bottom:1px solid #1D2A42}
+.s-b .dots{color:#FFB300}
+.s-b .dots i{width:16px;height:3px;border-radius:2px}
+.b-loc{display:flex;justify-content:space-between;align-items:baseline;font-size:14px;color:#8296B3;margin:12px 0 8px}
+.b-loc b{color:#E9EFFA;font-weight:500;font-size:15px}
+.b-now{display:flex;align-items:center;gap:16px;margin:2px 0 10px}
+.b-temp{font-size:62px;font-weight:700;line-height:1;letter-spacing:-1px}
+.b-cond{display:block;font-size:16px;font-weight:400;color:#8296B3;letter-spacing:0;margin-top:6px}
+.b-mets{flex:1;display:flex;flex-direction:column;gap:12px;font-size:14px;color:#8296B3}
+.b-mets b{color:#E9EFFA;font-weight:500;font-size:16px;margin-left:6px}
+.b-met .bar{height:4px;margin-top:5px;background:#1D2A42}
+.b-met .bar i{background:#7EB3E8}
+.b-days{border-top:1px solid #1D2A42;margin-top:8px}
+.b-day{display:grid;grid-template-columns:44px 1fr auto;gap:8px;align-items:center;padding:12px 0;border-bottom:1px solid #1D2A42;font-size:15px}
+.b-day .d-n{color:#8296B3;font-size:14px}
+.b-day .d-ic{font-size:18px;margin-right:6px}
+.b-day .d-lo{color:#7EB3E8;font-size:16px}
+.b-day .d-hi{color:#FFB300;font-size:16px;margin-left:8px}
+.b-label{font-size:14px;color:#8296B3;margin:14px 0 10px}
+.b-stats{display:flex}
+.b-stat{flex:1}
+.b-stat + .b-stat{border-left:1px solid #1D2A42;padding-left:18px}
+.b-stat b{font-size:48px;font-weight:700;line-height:1.05;display:block}
+.b-stat b i{font-size:20px;color:#8296B3;font-style:normal;font-weight:400}
+.b-stat span{font-size:14px;color:#8296B3;display:block;margin-top:5px}
+.b-week{border-top:1px solid #1D2A42;margin-top:16px;padding-top:14px}
+.b-week-head{display:flex;justify-content:space-between;align-items:baseline;font-size:15px;color:#8296B3;margin-bottom:10px}
+.b-week-head b{font-size:30px;color:#FFB300;font-weight:700}
+.s-b .bar{background:#1D2A42}
+.s-b .bar.w8{height:8px}
+.s-b .bar.w8 i{background:#FFB300}
+.b-todo{padding:14px 2px;border-bottom:1px solid #1D2A42;font-size:17px}
+.b-todo .cbx{width:22px;height:22px;border-radius:6px;border:2px solid #3B4C6B;font-size:14px}
+.b-todo.done .cbx{background:#FFB300;border-color:#FFB300;color:#0C1322}
+.b-todo.done .t-text{color:#5A6B87;text-decoration:line-through}
+.b-foot{font-size:14px;color:#8296B3;padding-top:12px}
+
+/* ============ 风格 C · 小黑板 ============ */
+.s-c{background:#7A5233;padding:8px;gap:0}
+.board{flex:1;background:#26382E;border-radius:9px;padding:12px 15px 14px;display:flex;flex-direction:column;gap:8px;color:#F3EFE0;min-height:0}
+.s-c .sbar{color:#C9D3C2}
+.s-c .dots{color:#FFD966}
+.c-title{font-family:'Long Cang','Noto Sans SC',sans-serif;font-size:27px;line-height:1.1;color:#FFD966;border-bottom:2px dashed rgba(243,239,224,.4);align-self:flex-start;padding:0 4px 1px}
+.c-loc{font-size:15px;color:#C9D3C2;padding-left:2px}
+.c-hero{text-align:center}
+.c-sun{font-size:38px;line-height:1.2;color:#FFD966}
+.c-temp{font-family:'Long Cang','Noto Sans SC',sans-serif;font-size:58px;line-height:1.1}
+.c-cond{font-size:19px;color:#FFD966}
+.c-mets{text-align:center;font-size:15px;color:#C9D3C2}
+.c-div{border-top:2px dashed rgba(243,239,224,.28);margin:2px 0}
+.c-row{display:flex;justify-content:space-between;align-items:baseline;font-size:16px;padding:3px 2px}
+.c-row .d-n{color:#C9D3C2;font-size:15px;margin-left:6px}
+.c-big{font-family:'Long Cang','Noto Sans SC',sans-serif;font-size:54px;line-height:1.1;text-align:center}
+.c-big i{font-size:26px;color:#8FA08F;font-style:normal}
+.c-sub{text-align:center;font-size:15px;color:#C9D3C2;margin-top:-4px}
+.c-stars{text-align:center;font-size:26px;color:#FFD966;letter-spacing:7px;line-height:1.2}
+.c-week-head{display:flex;justify-content:space-between;align-items:baseline;font-size:16px}
+.c-week-head b{font-family:'Long Cang','Noto Sans SC',sans-serif;font-size:32px;color:#F5A8BC;font-weight:400}
+.c-bar{height:9px;border:1.5px dashed rgba(243,239,224,.5);border-radius:5px;overflow:hidden}
+.c-bar i{display:block;height:100%;background:#FFD966}
+.c-todo{padding:10px 2px;font-size:19px}
+.c-todo .cbx{width:24px;height:24px;border-radius:5px;border:2px solid #F3EFE0;font-size:15px}
+.c-todo.done .cbx{background:#FFD966;border-color:#FFD966;color:#26382E}
+.c-todo.done .t-text{color:#8FA08F;text-decoration:line-through}
+.c-foot{font-size:14px;color:#A9B8A2;text-align:center;padding-top:2px}
+
+/* ===== 浮动风格切换条 ===== */
+.switcher{
+  position:fixed;left:50%;transform:translateX(-50%);
+  bottom:calc(14px + env(safe-area-inset-bottom,0px));
+  background:var(--surface);border:1px solid var(--line);border-radius:999px;
+  display:flex;align-items:center;gap:8px;padding:8px 10px;
+  box-shadow:0 4px 18px rgba(0,0,0,.25);z-index:10;
+}
+.switcher button{border:0;background:none;cursor:pointer;color:var(--fg);font:inherit}
+.sw-arrow{width:34px;height:34px;border-radius:50%;font-size:17px;display:grid;place-items:center}
+.sw-arrow:hover{background:var(--bg)}
+.sw-mid{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:128px}
+.sw-name{font-size:13px;font-weight:500;white-space:nowrap}
+.sw-dots{display:flex;gap:6px}
+.sw-dots button{width:22px;height:18px;border-radius:999px;font-size:11px;color:var(--dim);display:grid;place-items:center}
+.sw-dots button:hover{background:var(--bg)}
+.sw-dots button.on{background:var(--accent);color:#fff}
+</style>
+
+<svg style="display:none" aria-hidden="true"><symbol id="wifi" viewBox="0 0 20 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 5.5a12 12 0 0 1 16 0"/><path d="M5.2 8.8a7.5 7.5 0 0 1 9.6 0"/><circle cx="10" cy="12" r="1.6" fill="currentColor" stroke="none"/></symbol></svg>
+
+<header class="page-head">
+  <h1>小智桌面三屏原型</h1>
+  <p class="page-meta">
+    画布 <b>320×480</b>（3.5" ST7796 1:1）· 三屏：<b>天气 / 学习进度 / 待办</b>，实机为 lv_tileview 左右滑翻页<br>
+    硬约束：仅圆角矩形 / 文字 / lv_bar / 复选框，无渐变阴影；字号 ≥14px，主信息 20–74px；状态栏留 WiFi + 时钟<br>
+    切换：<b>底部浮条</b>或键盘 <b>← / →</b>；P3 任务行可直接点选看勾选态 · 天气为 Open-Meteo 实测样例（南京·江宁·禄口）
+  </p>
+</header>
+
+<!-- ============ A · 儿童大字卡 ============ -->
+<section class="variant" id="panel-a">
+  <div class="v-head">
+    <h2>A · 儿童大字卡</h2>
+    <p>大数字、大图标、白卡片，孩子隔一米也能看清；三屏都用同一套「标题—大数字—卡片」节奏。</p>
+    <p>LVGL 代价：emoji 图标需在固件打包图标资源；浅底整屏刷新稍慢于深底。</p>
+  </div>
+  <div class="screens">
+    <figure>
+      <div class="bezel"><div class="screen s-a">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>周三 16:42</span></div>
+        <div class="a-loc">📍 南京·江宁·禄口</div>
+        <div class="a-hero">
+          <div class="a-wicon">☀️</div>
+          <div class="a-temp">21.7°</div>
+          <div class="a-cond">晴</div>
+        </div>
+        <div class="a-chips"><span class="a-chip">💧 湿度 60%</span><span class="a-chip">🍃 4.4 km/h</span></div>
+        <div class="a-days">
+          <div class="a-card"><span class="d-day">今天</span><span class="d-ic">☁️</span><span class="d-t">12.6° ~ 23.7°</span><span class="d-n">雾</span></div>
+          <div class="a-card"><span class="d-day">明天</span><span class="d-ic">⛅</span><span class="d-t">12.0° ~ 20.8°</span><span class="d-n">多云</span></div>
+        </div>
+        <div class="dots"><i class="on"></i><i></i><i></i></div>
+      </div></div>
+      <figcaption>P1 天气</figcaption>
+    </figure>
+    <figure>
+      <div class="bezel"><div class="screen s-a">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>周三 16:42</span></div>
+        <div class="a-sec-title">今日答题</div>
+        <div class="a-score"><span class="a-num">12</span><span class="a-den">/ 15 题</span></div>
+        <div class="a-sub">答对题数</div>
+        <div class="a-stars">⭐⭐⭐⭐⭐</div>
+        <div class="a-sub">连续答对 5 题</div>
+        <div class="a-week">
+          <div class="a-week-head"><span>本周正确率</span><span class="a-pct">80%</span></div>
+          <div class="bar"><i style="width:80%"></i></div>
+        </div>
+        <div class="dots"><i class="on"></i><i></i><i></i></div>
+      </div></div>
+      <figcaption>P2 学习进度</figcaption>
+    </figure>
+    <figure>
+      <div class="bezel"><div class="screen s-a">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>周三 16:42</span></div>
+        <div class="a-sec-title">今日任务<span class="a-count">1 / 3 完成</span></div>
+        <div class="a-todos">
+          <button class="todo a-todo done" type="button"><span class="cbx">✓</span><span class="t-text">✏️ 口算 20 题</span></button>
+          <button class="todo a-todo" type="button"><span class="cbx">✓</span><span class="t-text">🪢 跳绳 200 个</span></button>
+          <button class="todo a-todo" type="button"><span class="cbx">✓</span><span class="t-text">📖 读绘本 15 分钟</span></button>
+        </div>
+        <div class="a-add">＋ 对小智说：「加个任务 …」</div>
+        <div class="dots"><i class="on"></i><i></i><i></i></div>
+      </div></div>
+      <figcaption>P3 待办 · 可点击</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ B · 深色仪表盘 ============ -->
+<section class="variant" id="panel-b" hidden>
+  <div class="v-head">
+    <h2>B · 深色仪表盘</h2>
+    <p>单层深色面板、细分割线、数字分级；信息密度最高，家长扫一眼全有。</p>
+    <p>LVGL 代价：最低——全部为原生控件（label / lv_bar / 线条），深底还省 SPI 刷新时间。</p>
+  </div>
+  <div class="screens">
+    <figure>
+      <div class="bezel"><div class="screen s-b">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>16:42</span></div>
+        <div class="b-loc"><b>南京 · 江宁 · 禄口</b><span>16:12 更新</span></div>
+        <div class="b-now">
+          <div class="b-temp">21.7°<span class="b-cond">晴</span></div>
+          <div class="b-mets">
+            <div class="b-met">湿度<b>60%</b><div class="bar"><i style="width:60%"></i></div></div>
+            <div class="b-met">风速<b>4.4 km/h</b><div class="bar"><i style="width:22%"></i></div></div>
+          </div>
+        </div>
+        <div class="b-days">
+          <div class="b-day"><span>今天</span><span><span class="d-ic">☁️</span><span class="d-n">雾</span></span><span><span class="d-lo">12.6°</span><span class="d-hi">23.7°</span></span></div>
+          <div class="b-day"><span>明天</span><span><span class="d-ic">⛅</span><span class="d-n">多云</span></span><span><span class="d-lo">12.0°</span><span class="d-hi">20.8°</span></span></div>
+        </div>
+        <div class="dots"><i></i><i class="on"></i><i></i></div>
+      </div></div>
+      <figcaption>P1 天气</figcaption>
+    </figure>
+    <figure>
+      <div class="bezel"><div class="screen s-b">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>16:42</span></div>
+        <div class="b-label">学习进度</div>
+        <div class="b-stats">
+          <div class="b-stat"><b>12<i> / 15</i></b><span>今日答对题数</span></div>
+          <div class="b-stat"><b>5</b><span>连续答对</span></div>
+        </div>
+        <div class="b-week">
+          <div class="b-week-head"><span>本周正确率</span><b>80%</b></div>
+          <div class="bar w8"><i style="width:80%"></i></div>
+        </div>
+        <div class="dots"><i></i><i class="on"></i><i></i></div>
+      </div></div>
+      <figcaption>P2 学习进度</figcaption>
+    </figure>
+    <figure>
+      <div class="bezel"><div class="screen s-b">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>16:42</span></div>
+        <div class="b-label">待办 · 3 项</div>
+        <div>
+          <div class="todo b-todo done" role="button" tabindex="0"><span class="cbx">✓</span><span class="t-text">口算 20 题</span></div>
+          <div class="todo b-todo" role="button" tabindex="0"><span class="cbx">✓</span><span class="t-text">跳绳 200 个</span></div>
+          <div class="todo b-todo" role="button" tabindex="0"><span class="cbx">✓</span><span class="t-text">读绘本 15 分钟</span></div>
+        </div>
+        <div class="b-foot">＋ 语音添加 · 对小智说「加个任务 …」</div>
+        <div class="dots"><i></i><i class="on"></i><i></i></div>
+      </div></div>
+      <figcaption>P3 待办 · 可点击</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- ============ C · 小黑板 ============ -->
+<section class="variant" id="panel-c" hidden>
+  <div class="v-head">
+    <h2>C · 小黑板</h2>
+    <p>一块木框黑板贴在墙上：粉笔白/黄/粉三色 + 虚线分隔，学习场景代入感最强。</p>
+    <p>LVGL 代价：木框 = 带边框矩形，粉笔感全靠配色与虚线（line dash），可实现；手写体固件端退回 noto，靠字号与颜色保留气质。</p>
+  </div>
+  <div class="screens">
+    <figure>
+      <div class="bezel"><div class="screen s-c"><div class="board">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>周三 16:42</span></div>
+        <div class="c-title">今日天气</div>
+        <div class="c-loc">南京 · 江宁 · 禄口</div>
+        <div class="c-hero">
+          <div class="c-sun">☼</div>
+          <div class="c-temp">21.7°</div>
+          <div class="c-cond">晴</div>
+        </div>
+        <div class="c-mets">湿度 60% ｜ 风 4.4 km/h</div>
+        <div class="c-div"></div>
+        <div class="c-row"><span>今天 · 雾</span><span>12.6° ~ 23.7°</span></div>
+        <div class="c-row"><span>明天 · 多云</span><span>12.0° ~ 20.8°</span></div>
+        <div class="dots"><i></i><i></i><i class="on"></i></div>
+      </div></div></div>
+      <figcaption>P1 天气</figcaption>
+    </figure>
+    <figure>
+      <div class="bezel"><div class="screen s-c"><div class="board">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>周三 16:42</span></div>
+        <div class="c-title">今日答题</div>
+        <div class="c-big">12 <i>/ 15 题</i></div>
+        <div class="c-sub">今天对了 12 题，真棒！</div>
+        <div class="c-stars">★★★★★</div>
+        <div class="c-sub">连续答对 5 题</div>
+        <div class="c-div"></div>
+        <div class="c-week-head"><span>本周正确率</span><b>80%</b></div>
+        <div class="c-bar"><i style="width:80%"></i></div>
+        <div class="dots"><i></i><i></i><i class="on"></i></div>
+      </div></div></div>
+      <figcaption>P2 学习进度</figcaption>
+    </figure>
+    <figure>
+      <div class="bezel"><div class="screen s-c"><div class="board">
+        <div class="sbar"><svg><use href="#wifi"/></svg><span>周三 16:42</span></div>
+        <div class="c-title">今日任务</div>
+        <div>
+          <div class="todo c-todo done" role="button" tabindex="0"><span class="cbx">✓</span><span class="t-text">口算 20 题</span></div>
+          <div class="todo c-todo" role="button" tabindex="0"><span class="cbx">✓</span><span class="t-text">跳绳 200 个</span></div>
+          <div class="todo c-todo" role="button" tabindex="0"><span class="cbx">✓</span><span class="t-text">读绘本 15 分钟</span></div>
+        </div>
+        <div class="c-foot">对小智说：加个任务 …</div>
+        <div class="dots"><i></i><i></i><i class="on"></i></div>
+      </div></div></div>
+      <figcaption>P3 待办 · 可点击</figcaption>
+    </figure>
+  </div>
+</section>
+
+<p class="swipe-note">实机翻页：左右滑动切换三屏（lv_tileview 局部刷新，无整页转场动画）</p>
+
+<div class="switcher" id="switcher">
+  <button class="sw-arrow" id="swPrev" type="button" aria-label="上一套风格">←</button>
+  <div class="sw-mid">
+    <span class="sw-name" id="swName"></span>
+    <div class="sw-dots" id="swDots"></div>
+  </div>
+  <button class="sw-arrow" id="swNext" type="button" aria-label="下一套风格">→</button>
+</div>
+
+<script>
+(function(){
+  var VS = [
+    {k:'a', n:'A · 儿童大字卡'},
+    {k:'b', n:'B · 深色仪表盘'},
+    {k:'c', n:'C · 小黑板'}
+  ];
+  var secs = {};
+  VS.forEach(function(v){ secs[v.k] = document.getElementById('panel-' + v.k); });
+
+  var dotsBox = document.getElementById('swDots');
+  VS.forEach(function(v, i){
+    var b = document.createElement('button');
+    b.type = 'button'; b.textContent = v.k.toUpperCase();
+    b.setAttribute('data-k', v.k); b.title = v.n;
+    b.addEventListener('click', function(){ go(v.k); });
+    dotsBox.appendChild(b);
+  });
+
+  function curKey(){ var h = location.hash.replace('#',''); return secs[h] ? h : 'a'; }
+  function idx(k){ for (var i=0;i<VS.length;i++) if (VS[i].k===k) return i; return 0; }
+
+  function render(){
+    var k = curKey();
+    VS.forEach(function(v){ secs[v.k].hidden = v.k !== k; });
+    document.getElementById('swName').textContent =
+      VS[idx(k)].n + '（' + (idx(k)+1) + '/' + VS.length + '）';
+    dotsBox.querySelectorAll('button').forEach(function(b){
+      b.classList.toggle('on', b.getAttribute('data-k') === k);
+    });
+  }
+  function go(k){ if (curKey() !== k) location.hash = k; }
+
+  window.addEventListener('hashchange', render);
+
+  document.getElementById('swPrev').addEventListener('click', function(){
+    go(VS[(idx(curKey()) + VS.length - 1) % VS.length].k);
+  });
+  document.getElementById('swNext').addEventListener('click', function(){
+    go(VS[(idx(curKey()) + 1) % VS.length].k);
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.target.closest && e.target.closest('input,textarea,[contenteditable]')) return;
+    if (e.key === 'ArrowLeft')  document.getElementById('swPrev').click();
+    if (e.key === 'ArrowRight') document.getElementById('swNext').click();
+  });
+
+  // P3 勾选态演示（只切 class，无持久化）
+  document.addEventListener('click', function(e){
+    var t = e.target.closest('.todo');
+    if (t) t.classList.toggle('done');
+  });
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    var t = e.target.closest && e.target.closest('.todo');
+    if (t){ e.preventDefault(); t.classList.toggle('done'); }
+  });
+
+  render();
+})();
+</script>
